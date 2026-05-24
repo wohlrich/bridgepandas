@@ -11,6 +11,7 @@ An empty suit is written as "-".
 
 from __future__ import annotations
 
+import re
 import numpy as np
 import pandas as pd
 from pandas.api.extensions import ExtensionArray, ExtensionDtype, register_extension_dtype
@@ -381,6 +382,133 @@ SpadesAccessor   = _make_suit_accessor("spades",   39)
 HeartsAccessor   = _make_suit_accessor("hearts",   26)
 DiamondsAccessor = _make_suit_accessor("diamonds", 13)
 ClubsAccessor    = _make_suit_accessor("clubs",     0)
+
+
+# ---------------------------------------------------------------------------
+# Generic card counting
+# ---------------------------------------------------------------------------
+
+# Each token in the comma-separated spec is suits (SHDC) then ranks (AKQJT2-9).
+# Either part may be omitted; omitting suits means all suits, omitting ranks
+# means all ranks in those suits.  E.g. "HDAK" = red A/K; "A,SK" = all aces
+# plus SK (key cards for spades).
+_COUNT_TOKEN_RE = re.compile(r"^([SHDCshdc]*)([AKQJTakqjt2-9]*)$")
+
+
+def _parse_count_spec(spec: str) -> int:
+    """Parse a count spec string into a 52-bit card bitmask."""
+    mask = 0
+    for raw in spec.split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        mo = _COUNT_TOKEN_RE.match(token)
+        if not mo or (not mo.group(1) and not mo.group(2)):
+            raise ValueError(
+                f"Bad count spec token {token!r}. "
+                "Each token must be suits (SHDC) then ranks (AKQJT2-9), e.g. 'HDA' or 'SK'."
+            )
+        suits = mo.group(1).upper() or "SHDC"
+        ranks = mo.group(2).upper() or RANKS
+        for suit in suits:
+            off = _SUIT_OFFSET[suit]
+            for rank in ranks:
+                mask |= 1 << (off + _RANK_INDEX[rank])
+    if not mask:
+        raise ValueError(f"Empty count spec: {spec!r}")
+    return mask
+
+
+def _count_spec_array(data: np.ndarray, spec_mask: int) -> np.ndarray:
+    """Return an int8 array of how many cards matching spec_mask each hand holds."""
+    masked = (data & spec_mask).astype(np.uint64).view(np.uint8)
+    return np.unpackbits(masked).reshape(-1, 64).sum(axis=1).astype(np.int8)
+
+
+@pd.api.extensions.register_series_accessor("num")
+class _NumAccessor:
+    """Accessor that returns a callable via the __new__ trick.
+
+    ``series.num`` evaluates to a function, so
+    ``series.num("A,SK")`` returns a pd.Series of counts.
+    """
+
+    def __new__(cls, series: pd.Series):
+        arr = series.array
+        if not isinstance(arr, BridgeHandArray):
+            raise AttributeError("num is only valid for BridgeHand series")
+
+        def _count(spec: str) -> pd.Series:
+            sm = _parse_count_spec(spec)
+            counts = _count_spec_array(arr._data, sm)
+            values = pd.array(counts, dtype=pd.Int8Dtype())
+            if arr._mask.any():
+                values[arr._mask] = pd.NA
+            return pd.Series(values, index=series.index, name=series.name)
+
+        return _count
+
+    def __init__(self, series: pd.Series) -> None:
+        pass  # never called; __new__ returned a non-instance
+
+
+# ---------------------------------------------------------------------------
+# Controls
+# ---------------------------------------------------------------------------
+
+# Bitmask of all aces and kings (the only cards that score controls).
+# Aces are at offset+12, kings at offset+11, for offsets C=0,D=13,H=26,S=39.
+_HONORS_MASK = np.uint64(0x000c006003001800)
+
+def _controls_array(data: np.ndarray, singleton_kings: bool) -> np.ndarray:
+    """Return an int8 array of control counts (A=2, K=1) for each hand.
+
+    The bit trick sums the four 2-bit (ace, king) pairs in two parallel add
+    steps then normalises to bits 0-3:
+
+        a — extract the 8 honor bits
+        b — fold S+H and D+C into two 3-bit accumulators at bits 37-39 / 11-13
+        c — add the two accumulators and shift to bits 0-3
+    """
+    u = data.view(np.uint64)
+    a = u & _HONORS_MASK
+    b = (a + (a >> np.uint64(13))) & np.uint64(0x000e000003800)
+    c = ((b + (b >> np.uint64(26))) >> np.uint64(11)) & np.uint64(0xf)
+    controls = c.astype(np.int8)
+    if not singleton_kings:
+        singleton = np.uint64(1 << 11)  # king is the only card in the suit
+        for off in (np.uint64(0), np.uint64(13), np.uint64(26), np.uint64(39)):
+            suit = (u >> off) & np.uint64(0x1FFF)
+            controls -= (suit == singleton).astype(np.int8)
+    return controls
+
+
+@pd.api.extensions.register_series_accessor("controls")
+class _ControlsAccessor:
+    """Accessor returning a callable so ``series.controls()`` returns a Series.
+
+    Parameters
+    ----------
+    singleton_kings : bool, default True
+        When False, a king with no other card in its suit counts 0 instead of 1.
+    """
+
+    def __new__(cls, series: pd.Series):
+        arr = series.array
+        if not isinstance(arr, BridgeHandArray):
+            raise AttributeError("controls is only valid for BridgeHand series")
+
+        def _controls(singleton_kings: bool = True) -> pd.Series:
+            counts = _controls_array(arr._data, singleton_kings)
+            values = pd.array(counts, dtype=pd.Int8Dtype())
+            if arr._mask.any():
+                values[arr._mask] = pd.NA
+            return pd.Series(values, index=series.index, name=series.name)
+
+        return _controls
+
+    def __init__(self, series: pd.Series) -> None:
+        pass  # never called; __new__ returned a non-instance
 
 
 # ---------------------------------------------------------------------------
