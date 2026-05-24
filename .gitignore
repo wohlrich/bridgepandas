@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Build artifacts
+*.so
+*.dylib
+*.egg-info/
+build/
+dist/
+*.egg
+
+# C/C++ object files
+*.o
+*.a
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
