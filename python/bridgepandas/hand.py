@@ -29,6 +29,13 @@ _SUIT_OFFSET: dict[str, int] = {"C": 0, "D": 13, "H": 26, "S": 39}
 # Display order: Spades / Hearts / Diamonds / Clubs
 _DISPLAY_SUITS = "SHDC"
 
+# Rank bit positions within a 13-bit suit field
+_ACE_BIT   = 1 << 12
+_KING_BIT  = 1 << 11
+_QUEEN_BIT = 1 << 10
+_JACK_BIT  = 1 << 9
+_TEN_BIT   = 1 << 8
+
 
 # ---------------------------------------------------------------------------
 # Encoding helpers
@@ -195,6 +202,23 @@ class Hand(int):
         return count
 
     @property
+    def quick_tricks(self) -> float:
+        v = int(self)
+        total = 0
+        for offset in (0, 13, 26, 39):
+            suit = (v >> offset) & 0x1FFF
+            has_a = bool(suit & _ACE_BIT)
+            has_k = bool(suit & _KING_BIT)
+            has_q = bool(suit & _QUEEN_BIT)
+            has_x = bool(suit & (_JACK_BIT - 1))
+            if has_a and has_k:           total += 4
+            elif has_a and has_q:         total += 3
+            elif has_a:                   total += 2
+            elif has_k and has_q:         total += 2
+            elif has_k and has_x:         total += 1
+        return total * 0.5
+
+    @property
     def losers(self) -> int:
         v = int(self)
         total = 0
@@ -202,12 +226,9 @@ class Hand(int):
             suit = (v >> offset) & 0x1FFF
             length = int(_POPCOUNT13[suit])
             losers = min(3, length)
-            if suit & (1 << 12):                   # ace
-                losers -= 1
-            if suit & (1 << 11) and length > 1:    # king
-                losers -= 1
-            if suit & (1 << 10) and length > 2:    # queen
-                losers -= 1
+            if suit & _ACE_BIT:                      losers -= 1
+            if suit & _KING_BIT  and length > 1:   losers -= 1
+            if suit & _QUEEN_BIT and length > 2:   losers -= 1
             total += losers
         return total
 
@@ -793,7 +814,7 @@ class _NumAccessor:
 # Aces are at offset+12, kings at offset+11, for offsets C=0,D=13,H=26,S=39.
 _HONORS_MASK = np.uint64(0x000c006003001800)
 
-def _controls_array(data: np.ndarray, singleton_kings: bool) -> np.ndarray:
+def _controls_array(data: np.ndarray) -> np.ndarray:
     """Return an int8 array of control counts (A=2, K=1) for each hand.
 
     The bit trick sums the four 2-bit (ace, king) pairs in two parallel add
@@ -807,13 +828,7 @@ def _controls_array(data: np.ndarray, singleton_kings: bool) -> np.ndarray:
     a = u & _HONORS_MASK
     b = (a + (a >> np.uint64(13))) & np.uint64(0x000e000003800)
     c = ((b + (b >> np.uint64(26))) >> np.uint64(11)) & np.uint64(0xf)
-    controls = c.astype(np.int8)
-    if not singleton_kings:
-        singleton = np.uint64(1 << 11)  # king is the only card in the suit
-        for off in (np.uint64(0), np.uint64(13), np.uint64(26), np.uint64(39)):
-            suit = (u >> off) & np.uint64(0x1FFF)
-            controls -= (suit == singleton).astype(np.int8)
-    return controls
+    return c.astype(np.int8)
 
 
 @pd.api.extensions.register_series_accessor("controls")
@@ -822,7 +837,7 @@ class ControlsAccessor:
         if not isinstance(series.array, BridgeHandArray):
             raise AttributeError("controls is only valid for BridgeHand series")
         arr = series.array
-        values = pd.array(_controls_array(arr._data, singleton_kings=True), dtype=pd.Int8Dtype())
+        values = pd.array(_controls_array(arr._data), dtype=pd.Int8Dtype())
         if arr._mask.any():
             values[arr._mask] = pd.NA
         return pd.Series(values, index=series.index, name=series.name)
@@ -867,9 +882,9 @@ def _losers_array(data: np.ndarray) -> np.ndarray:
         suit = ((u >> np.uint64(offset)) & np.uint64(0x1FFF)).astype(np.uint16)
         length = _POPCOUNT13[suit]
         losers = np.minimum(length, np.int8(3))
-        losers -= ((suit >> np.uint16(12)) & np.uint16(1)).astype(np.int8)          # ace
-        losers -= (((suit >> np.uint16(11)) & np.uint16(1)) & (length > 1)).astype(np.int8)  # king
-        losers -= (((suit >> np.uint16(10)) & np.uint16(1)) & (length > 2)).astype(np.int8)  # queen
+        losers -= ((suit & np.uint16(_ACE_BIT))   != 0).astype(np.int8)
+        losers -= (((suit & np.uint16(_KING_BIT))  != 0) & (length > 1)).astype(np.int8)
+        losers -= (((suit & np.uint16(_QUEEN_BIT)) != 0) & (length > 2)).astype(np.int8)
         total += losers
     return total
 
@@ -881,6 +896,47 @@ class LosersAccessor:
             raise AttributeError("losers accessor is only valid for BridgeHand columns")
         arr = series.array
         values = pd.array(_losers_array(arr._data), dtype=pd.Int8Dtype())
+        if arr._mask.any():
+            values[arr._mask] = pd.NA
+        return pd.Series(values, index=series.index, name=series.name)
+
+    def __init__(self, series: pd.Series) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Quick tricks
+# ---------------------------------------------------------------------------
+
+
+def _quick_tricks_array(data: np.ndarray) -> np.ndarray:
+    """Return a float32 array of quick trick counts (AK=2, AQ=1.5, A=1, KQ=1, Kx=0.5).
+
+    Accumulated as int8 (×2) per suit then multiplied by 0.5 at the end.
+    """
+    u = data.view(np.uint64)
+    total = np.zeros(len(u), dtype=np.int8)
+    for offset in _SUIT_OFFSETS:
+        suit = ((u >> np.uint64(offset)) & np.uint64(0x1FFF)).astype(np.uint16)
+        has_a = (suit & np.uint16(_ACE_BIT))   != 0
+        has_k = (suit & np.uint16(_KING_BIT))  != 0
+        has_q = (suit & np.uint16(_QUEEN_BIT)) != 0
+        has_x = (suit & np.uint16(_JACK_BIT - 1)) != 0   # J through 2
+        total += (has_a & has_k).astype(np.int8)             * np.int8(4)
+        total += (has_a & ~has_k & has_q).astype(np.int8)    * np.int8(3)
+        total += (has_a & ~has_k & ~has_q).astype(np.int8)   * np.int8(2)
+        total += (~has_a & has_k & has_q).astype(np.int8)    * np.int8(2)
+        total += (~has_a & has_k & ~has_q & has_x).astype(np.int8)
+    return total.astype(np.float32) * np.float32(0.5)
+
+
+@pd.api.extensions.register_series_accessor("quick_tricks")
+class QuickTricksAccessor:
+    def __new__(cls, series: pd.Series) -> pd.Series:
+        if not isinstance(series.array, BridgeHandArray):
+            raise AttributeError("quick_tricks accessor is only valid for BridgeHand columns")
+        arr = series.array
+        values = pd.array(_quick_tricks_array(arr._data), dtype=pd.Float32Dtype())
         if arr._mask.any():
             values[arr._mask] = pd.NA
         return pd.Series(values, index=series.index, name=series.name)
