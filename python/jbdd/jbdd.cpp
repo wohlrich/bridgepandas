@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <set>
 #include "j128.h"
 #include "jbdd.h"
@@ -97,9 +98,35 @@ struct BDD_ITE {
     }
 };
 
-typedef std::vector<BDD_INFO>          BDD_INFO_VEC;
-typedef std::map<BDD_TRIPLE, size_t>   BDD_TRIPLE_MAP;
-typedef std::map<BDD_ITE, bddref_t>    BDD_ITE_MAP;
+template<typename T>
+static void hash_combine(size_t& seed, const T& val) {
+    seed ^= std::hash<T>{}(val) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+namespace std {
+    template<> struct hash<BDD_TRIPLE> {
+        size_t operator()(const BDD_TRIPLE& t) const {
+            size_t s = 0;
+            hash_combine(s, (int64_t)t.vnum);
+            hash_combine(s, t.avec);
+            hash_combine(s, t.sans);
+            return s;
+        }
+    };
+    template<> struct hash<BDD_ITE> {
+        size_t operator()(const BDD_ITE& t) const {
+            size_t s = 0;
+            hash_combine(s, t.i);
+            hash_combine(s, t.t);
+            hash_combine(s, t.e);
+            return s;
+        }
+    };
+}
+
+typedef std::vector<BDD_INFO>                        BDD_INFO_VEC;
+typedef std::unordered_map<BDD_TRIPLE, size_t>       BDD_TRIPLE_MAP;
+typedef std::unordered_map<BDD_ITE, bddref_t>        BDD_ITE_MAP;
 
 static
 BDD_INFO_VEC& info_vector()
