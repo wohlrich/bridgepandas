@@ -339,6 +339,34 @@ class HcpAccessor:
         pass  # never called; __new__ returned a non-instance
 
 
+_AKQ_BY_RANK: dict[int, int] = {12: 3, 11: 2, 10: 1}  # A, K, Q
+
+
+def _akq_array(data: np.ndarray) -> np.ndarray:
+    """Return an int8 array of AKQ point counts (A=3, K=2, Q=1) for each hand."""
+    u = data.view(np.uint64)
+    akq = np.zeros(len(u), dtype=np.int8)
+    for rank_idx, pts in _AKQ_BY_RANK.items():
+        for offset in _SUIT_OFFSETS:
+            akq += (((u >> np.uint64(offset + rank_idx)) & np.uint64(1)) * pts).astype(np.int8)
+    return akq
+
+
+@pd.api.extensions.register_series_accessor("akq_points")
+class AkqAccessor:
+    def __new__(cls, series: pd.Series) -> pd.Series:
+        if not isinstance(series.array, BridgeHandArray):
+            raise AttributeError("akq_points accessor is only valid for BridgeHand columns")
+        arr = series.array
+        values = pd.array(_akq_array(arr._data), dtype=pd.Int8Dtype())
+        if arr._mask.any():
+            values[arr._mask] = pd.NA
+        return pd.Series(values, index=series.index, name=series.name)
+
+    def __init__(self, series: pd.Series) -> None:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Suit length computation
 # ---------------------------------------------------------------------------
