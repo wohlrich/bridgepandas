@@ -6,7 +6,10 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from .hand import int_to_hand_str, hand_str_to_int, BridgeHandArray
+from .hand import int_to_hand_str, hand_str_to_int, BridgeHandArray, RANKS, _RANK_INDEX, _SUIT_OFFSET
+
+# suits in bit-position order: bits 0-12 = C, 13-25 = D, 26-38 = H, 39-51 = S
+_SUITS_BY_OFFSET = "CDHS"
 
 
 @dataclass(frozen=True)
@@ -86,3 +89,221 @@ class Deal:
             f"W  {w:{width}}   E  {e}\n"
             f"{pad}S  {s}"
         )
+
+
+# ---------------------------------------------------------------------------
+# random_deals
+# ---------------------------------------------------------------------------
+
+def _parse_partial_hand(s: str) -> int:
+    """Parse a partial hand string (S/H/D/C, fewer than 13 cards ok) to int64 bitmask."""
+    parts = s.split("/")
+    if len(parts) != 4:
+        raise ValueError(f"Expected 4 suit groups separated by '/': {s!r}")
+    result = 0
+    for suit, ranks in zip("SHDC", parts):
+        offset = _SUIT_OFFSET[suit]
+        if ranks == "-":
+            continue
+        for ch in ranks:
+            if ch not in _RANK_INDEX:
+                raise ValueError(f"Unknown rank {ch!r} in {s!r}")
+            bit = offset + _RANK_INDEX[ch]
+            if result & (1 << bit):
+                raise ValueError(f"Duplicate card {suit}{ch} in {s!r}")
+            result |= 1 << bit
+    return result
+
+
+def _spec_to_mask(spec) -> int | None:
+    """Return int64 bitmask for str/int specs, None for everything else."""
+    if spec is None or callable(spec):
+        return None
+    if isinstance(spec, int):
+        return spec
+    if isinstance(spec, str):
+        return _parse_partial_hand(spec)
+    # HandSet — no fixed cards to extract
+    return None
+
+
+def _mask_to_handset(mask: int):
+    """Convert an int64 card-presence bitmask to a HandSet (requires each card)."""
+    from .handset import hand_makers
+    m = hand_makers
+    hs = m.ANY
+    for bit in range(52):
+        if (mask >> bit) & 1:
+            suit = _SUITS_BY_OFFSET[bit // 13]
+            rank = RANKS[bit % 13]
+            hs = hs & m.CARD(f"{suit}{rank}")
+    return hs
+
+
+def random_deals(
+    n: int,
+    west=None,
+    north=None,
+    east=None,
+    south=None,
+    accept=None,
+    seed=None,
+    fail_count: int = 100_000,
+) -> pd.DataFrame:
+    """
+    Generate *n* random bridge deals, returned as a DataFrame.
+
+    Parameters
+    ----------
+    n : int
+        Number of deals to generate.
+    west, north, east, south : optional
+        Constraint on each direction's hand. Accepted types:
+
+        - ``None`` — no constraint
+        - ``str`` — partial hand string ``"AK/Q/-/-"`` (S/H/D/C format, known cards)
+        - ``int`` — int64 bitmask of required cards
+        - ``HandSet`` — BDD constraint (enables fast BDD sampling)
+        - ``callable`` — ``f(hand_int) -> bool`` (forces slow accept/reject path)
+
+    accept : callable, optional
+        ``f(Deal) -> bool`` applied to each candidate deal. Forces slow path.
+    seed : int or numpy.random.Generator, optional
+        RNG seed for reproducibility.
+    fail_count : int
+        After this many consecutive failures before the first success, raise
+        ``ValueError``.  ``None`` means no limit.
+    """
+    specs = [west, north, east, south]
+
+    if accept is None and all(x is None for x in specs):
+        # Fastest path: pure numpy shuffle, no BDD overhead
+        from .hand import random_deals as _numpy_random_deals
+        return _numpy_random_deals(n, seed=seed)
+
+    # Fast path: BDD sampling when no plain callables are present
+    # HandSets are not callable; str/int/None are also not callable
+    use_fast = accept is None and not any(
+        callable(x) and not hasattr(x, "contains")
+        for x in specs
+    )
+
+    if use_fast:
+        return _fast_random_deals(n, west, north, east, south, seed)
+    return _slow_random_deals(n, west, north, east, south, accept, seed, fail_count)
+
+
+def _fast_random_deals(n, west, north, east, south, seed):
+    """BDD sampling path: all specs are None/str/int/HandSet, no accept."""
+    from .handset import hand_makers, HandSet
+    m = hand_makers
+
+    def to_hs(spec):
+        if spec is None:
+            return m.ANY
+        if isinstance(spec, HandSet):
+            return spec
+        mask = _spec_to_mask(spec)
+        if mask is None:
+            raise TypeError(
+                f"Unsupported spec type {type(spec).__name__!r} in fast path. "
+                "Direction specs must be None, str, int, or HandSet."
+            )
+        return _mask_to_handset(mask)
+
+    ds = m.WEST(to_hs(west)) & m.NORTH(to_hs(north)) & m.EAST(to_hs(east)) & m.SOUTH(to_hs(south))
+    return ds.sample_df(n, seed=seed)
+
+
+def _slow_random_deals(n, west, north, east, south, accept, seed, fail_count):
+    """Accept/reject path: handles callable specs and/or an accept function."""
+    from .handset import HandSet
+
+    rng = np.random.default_rng(seed)
+    specs = [west, north, east, south]
+    names = ["west", "north", "east", "south"]
+
+    known = [0] * 4       # int bitmask of fixed cards per direction
+    acceptors: dict[int, object] = {}  # index → callable(hand_int) → bool
+    used_bits: set[int] = set()
+
+    for i, spec in enumerate(specs):
+        if spec is None:
+            continue
+        if isinstance(spec, str):
+            mask = _parse_partial_hand(spec)
+            _claim_bits(i, mask, known, used_bits)
+        elif isinstance(spec, int):
+            _claim_bits(i, spec, known, used_bits)
+        elif isinstance(spec, HandSet):
+            acceptors[i] = spec.contains
+        elif callable(spec):
+            acceptors[i] = spec
+        else:
+            raise TypeError(f"Unsupported spec type: {type(spec)}")
+
+    remaining = np.array([b for b in range(52) if b not in used_bits], dtype=np.intp)
+    need = [13 - bin(known[i]).count("1") for i in range(4)]
+
+    if sum(need) != len(remaining):
+        raise ValueError(
+            f"Impossible deal: known cards total {52 - len(remaining)}, "
+            f"but directions need {[13 - n for n in need]} more cards each"
+        )
+
+    results: dict[str, list[int]] = {name: [] for name in names}
+    hits = 0
+    misses = 0
+
+    while hits < n:
+        perm = rng.permutation(remaining)
+        hands = []
+        pos = 0
+        for i in range(4):
+            k = need[i]
+            mask = known[i]
+            for b in perm[pos: pos + k]:
+                mask |= 1 << int(b)
+            hands.append(mask)
+            pos += k
+
+        ok = all(acc(hands[i]) for i, acc in acceptors.items())
+        if not ok:
+            if hits == 0:
+                misses += 1
+                if fail_count is not None and misses >= fail_count:
+                    raise ValueError(
+                        f"No deals found after {fail_count} attempts — "
+                        "is your constraint satisfiable?"
+                    )
+            continue
+
+        if accept is not None:
+            deal = Deal(west=hands[0], north=hands[1], east=hands[2], south=hands[3])
+            if not accept(deal):
+                if hits == 0:
+                    misses += 1
+                    if fail_count is not None and misses >= fail_count:
+                        raise ValueError(
+                            f"No deals found after {fail_count} attempts — "
+                            "is your constraint satisfiable?"
+                        )
+                continue
+
+        for j, name in enumerate(names):
+            results[name].append(hands[j])
+        hits += 1
+
+    return pd.DataFrame({
+        name: BridgeHandArray(np.array(results[name], dtype=np.int64))
+        for name in names
+    })
+
+
+def _claim_bits(idx: int, mask: int, known: list, used_bits: set) -> None:
+    bits = {b for b in range(52) if (mask >> b) & 1}
+    overlap = used_bits & bits
+    if overlap:
+        raise ValueError(f"Card(s) assigned to multiple directions: bits {overlap}")
+    used_bits |= bits
+    known[idx] = mask

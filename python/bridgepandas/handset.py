@@ -636,4 +636,6 @@ class hand_makers:
         return functools.reduce(HandSet.__or__, [one(x) for x in spec])
 
 
-__all__ = ["hand_makers", "HandSet", "DealSet", "Card"]
+h = hand_makers
+
+__all__ = ["hand_makers", "h", "HandSet", "DealSet", "Card"]
