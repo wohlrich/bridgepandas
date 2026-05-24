@@ -21,11 +21,26 @@ class Deal:
 
     __slots__ = ("west", "north", "east", "south")
 
-    def __init__(self, west, north, east, south):
+    def __init__(self, west, north=None, east=None, south=None):
+        if north is None:
+            row = west
+            try:
+                west, north, east, south = row.west, row.north, row.east, row.south
+            except AttributeError:
+                west, north, east, south = row["west"], row["north"], row["east"], row["south"]
         object.__setattr__(self, "west",  Hand(west))
         object.__setattr__(self, "north", Hand(north))
         object.__setattr__(self, "east",  Hand(east))
         object.__setattr__(self, "south", Hand(south))
+
+    _KEY_MAP = {"W": "west", "N": "north", "E": "east", "S": "south",
+                "west": "west", "north": "north", "east": "east", "south": "south"}
+
+    def __getitem__(self, key):
+        attr = Deal._KEY_MAP.get(key)
+        if attr is None:
+            raise KeyError(f"Invalid direction {key!r}; use 'W', 'N', 'E', or 'S'")
+        return getattr(self, attr)
 
     def __setattr__(self, name, value):
         raise AttributeError("Deal is immutable")
@@ -49,8 +64,8 @@ class Deal:
 
     @classmethod
     def from_row(cls, row) -> Deal:
-        """Create a Deal from a DataFrame row (e.g. ``df.iloc[i]``)."""
-        return cls(row["west"], row["north"], row["east"], row["south"])
+        """Create a Deal from a DataFrame row — supports iloc[] rows and itertuples() rows."""
+        return cls(row)
 
     @classmethod
     def from_strings(cls, west: str, north: str, east: str, south: str) -> Deal:

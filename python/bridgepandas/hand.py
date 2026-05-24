@@ -101,6 +101,9 @@ class Hand(int):
     def __repr__(self) -> str:
         return f"Hand({int_to_hand_str(self)!r})"
 
+    def __len__(self) -> int:
+        return int(self).bit_count()
+
     def __add__(self, card: str) -> Hand:
         return Hand(int(self) | (1 << _parse_card(card)))
 
@@ -119,7 +122,7 @@ class Hand(int):
     # ------------------------------------------------------------------
 
     def _suit_len(self, offset: int) -> int:
-        return bin((int(self) >> offset) & 0x1FFF).count("1")
+        return int(_POPCOUNT13[(int(self) >> offset) & 0x1FFF])
 
     @property
     def hcp(self) -> int:
@@ -176,7 +179,7 @@ class Hand(int):
         return sum(1 for off in (0, 13, 26, 39) if self._suit_len(off) == 2)
 
     def num(self, spec: str) -> int:
-        return bin(int(self) & _parse_count_spec(spec)).count("1")
+        return (int(self) & _parse_count_spec(spec)).bit_count()
 
     def suits_of(self, spec: str) -> int:
         patterns = _parse_holding_spec(spec)
@@ -184,12 +187,29 @@ class Hand(int):
         count = 0
         for offset in (0, 13, 26, 39):
             suit = (v >> offset) & 0x1FFF
-            suit_len = bin(suit).count("1")
+            suit_len = int(_POPCOUNT13[suit])
             for total_len, above_mask, req_mask in patterns:
                 if suit_len == total_len and (suit & above_mask) == req_mask:
                     count += 1
                     break
         return count
+
+    @property
+    def losers(self) -> int:
+        v = int(self)
+        total = 0
+        for offset in (0, 13, 26, 39):
+            suit = (v >> offset) & 0x1FFF
+            length = int(_POPCOUNT13[suit])
+            losers = min(3, length)
+            if suit & (1 << 12):                   # ace
+                losers -= 1
+            if suit & (1 << 11) and length > 1:    # king
+                losers -= 1
+            if suit & (1 << 10) and length > 2:    # queen
+                losers -= 1
+            total += losers
+        return total
 
     def has(self, card: str) -> bool:
         return bool(int(self) & (1 << _parse_card(card)))
@@ -803,6 +823,64 @@ class ControlsAccessor:
             raise AttributeError("controls is only valid for BridgeHand series")
         arr = series.array
         values = pd.array(_controls_array(arr._data, singleton_kings=True), dtype=pd.Int8Dtype())
+        if arr._mask.any():
+            values[arr._mask] = pd.NA
+        return pd.Series(values, index=series.index, name=series.name)
+
+    def __init__(self, series: pd.Series) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Total card count
+# ---------------------------------------------------------------------------
+
+@pd.api.extensions.register_series_accessor("length")
+class LengthAccessor:
+    def __new__(cls, series: pd.Series) -> pd.Series:
+        if not isinstance(series.array, BridgeHandArray):
+            raise AttributeError("length accessor is only valid for BridgeHand columns")
+        arr = series.array
+        u = arr._data.view(np.uint64)
+        counts = sum(
+            _POPCOUNT13[((u >> np.uint64(off)) & np.uint64(0x1FFF)).astype(np.uint16)]
+            for off in _SUIT_OFFSETS
+        ).astype(np.int8)
+        values = pd.array(counts, dtype=pd.Int8Dtype())
+        if arr._mask.any():
+            values[arr._mask] = pd.NA
+        return pd.Series(values, index=series.index, name=series.name)
+
+    def __init__(self, series: pd.Series) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Losing trick count
+# ---------------------------------------------------------------------------
+
+def _losers_array(data: np.ndarray) -> np.ndarray:
+    """Return an int8 array of losing trick counts for each hand."""
+    u = data.view(np.uint64)
+    total = np.zeros(len(u), dtype=np.int8)
+    for offset in _SUIT_OFFSETS:
+        suit = ((u >> np.uint64(offset)) & np.uint64(0x1FFF)).astype(np.uint16)
+        length = _POPCOUNT13[suit]
+        losers = np.minimum(length, np.int8(3))
+        losers -= ((suit >> np.uint16(12)) & np.uint16(1)).astype(np.int8)          # ace
+        losers -= (((suit >> np.uint16(11)) & np.uint16(1)) & (length > 1)).astype(np.int8)  # king
+        losers -= (((suit >> np.uint16(10)) & np.uint16(1)) & (length > 2)).astype(np.int8)  # queen
+        total += losers
+    return total
+
+
+@pd.api.extensions.register_series_accessor("losers")
+class LosersAccessor:
+    def __new__(cls, series: pd.Series) -> pd.Series:
+        if not isinstance(series.array, BridgeHandArray):
+            raise AttributeError("losers accessor is only valid for BridgeHand columns")
+        arr = series.array
+        values = pd.array(_losers_array(arr._data), dtype=pd.Int8Dtype())
         if arr._mask.any():
             values[arr._mask] = pd.NA
         return pd.Series(values, index=series.index, name=series.name)
