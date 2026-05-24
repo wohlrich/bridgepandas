@@ -456,6 +456,135 @@ DoubletonsAccessor = _make_shape_accessor("doubletons", 2)
 
 
 # ---------------------------------------------------------------------------
+# Exact suit holding accessor  (series.suits("Kx") etc.)
+# ---------------------------------------------------------------------------
+
+# Token: zero or more rank chars followed by zero or more 'x' wildcards.
+# Each 'x' means one additional card strictly below the lowest named rank.
+_HOLDING_TOKEN_RE = re.compile(r"^([AKQJTakqjt2-9]*)([xX]*)$")
+
+
+def _parse_holding_token(token: str) -> tuple[int, int, int]:
+    """Parse one holding pattern into (total_length, above_mask, required_mask).
+
+    above_mask is a 13-bit mask covering all ranks >= the lowest named rank.
+    The match condition is:
+        popcount(suit) == total_length  AND  (suit & above_mask) == required_mask
+    """
+    mo = _HOLDING_TOKEN_RE.match(token)
+    if not mo or not (mo.group(1) or mo.group(2)):
+        raise ValueError(
+            f"Invalid holding token {token!r}. "
+            "Use ranks (AKQJT2-9) then optional x wildcards, e.g. 'K', 'Qx', 'AKJ'."
+        )
+    ranks_str = mo.group(1).upper()
+    x_count = len(mo.group(2))
+
+    if len(set(ranks_str)) != len(ranks_str):
+        raise ValueError(f"Duplicate rank in holding token {token!r}")
+
+    named_indices = [_RANK_INDEX[r] for r in ranks_str]
+    total_length = len(named_indices) + x_count
+
+    if not named_indices:
+        return (total_length, 0, 0)  # any suit of that length
+
+    req_mask = 0
+    for i in named_indices:
+        req_mask |= 1 << i
+    lowest = min(named_indices)
+    above_mask = (1 << 13) - (1 << lowest)  # bits lowest..12 inclusive
+
+    return (total_length, above_mask, req_mask)
+
+
+def _parse_holding_spec(spec: str) -> list[tuple[int, int, int]]:
+    """Parse a comma-separated holding spec into a list of patterns."""
+    patterns = [
+        _parse_holding_token(t.strip())
+        for t in spec.split(",")
+        if t.strip()
+    ]
+    if not patterns:
+        raise ValueError(f"Empty holding spec: {spec!r}")
+    return patterns
+
+
+def _suits_array(data: np.ndarray, patterns: list[tuple[int, int, int]]) -> np.ndarray:
+    """Return int8 array: count of suits matching any holding pattern."""
+    u = data.view(np.uint64)
+    counts = np.zeros(len(u), dtype=np.int8)
+    for offset in _SUIT_OFFSETS:
+        suit = ((u >> np.uint64(offset)) & np.uint64(0x1FFF)).astype(np.uint16)
+        suit_len = _POPCOUNT13[suit]
+        matches = np.zeros(len(u), dtype=bool)
+        for total_len, above_mask, req_mask in patterns:
+            length_ok = suit_len == total_len
+            honor_ok = (suit & np.uint16(above_mask)) == np.uint16(req_mask)
+            matches |= length_ok & honor_ok
+        counts += matches.astype(np.int8)
+    return counts
+
+
+@pd.api.extensions.register_series_accessor("suits_of")
+class _SuitsOfAccessor:
+    def __new__(cls, series: pd.Series):
+        arr = series.array
+        if not isinstance(arr, BridgeHandArray):
+            raise AttributeError("suits_of is only valid for BridgeHand series")
+
+        def _suits_of(spec: str) -> pd.Series:
+            patterns = _parse_holding_spec(spec)
+            counts = _suits_array(arr._data, patterns)
+            values = pd.array(counts, dtype=pd.Int8Dtype())
+            if arr._mask.any():
+                values[arr._mask] = pd.NA
+            return pd.Series(values, index=series.index, name=series.name)
+
+        return _suits_of
+
+    def __init__(self, series: pd.Series) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Single-card membership  (series.has("SK"))
+# ---------------------------------------------------------------------------
+
+def _parse_card(card: str) -> int:
+    """Parse a suit+rank string like 'CA' or 'SK' into a bit index (0-51)."""
+    if len(card) != 2:
+        raise ValueError(f"Card must be two characters (suit then rank), got {card!r}")
+    suit, rank = card[0].upper(), card[1].upper()
+    if suit not in _SUIT_OFFSET:
+        raise ValueError(f"Unknown suit {card[0]!r} in {card!r}; use S, H, D, or C")
+    if rank not in _RANK_INDEX:
+        raise ValueError(f"Unknown rank {card[1]!r} in {card!r}; use A, K, Q, J, T, 9-2")
+    return _SUIT_OFFSET[suit] + _RANK_INDEX[rank]
+
+
+@pd.api.extensions.register_series_accessor("has")
+class _HasAccessor:
+    def __new__(cls, series: pd.Series):
+        arr = series.array
+        if not isinstance(arr, BridgeHandArray):
+            raise AttributeError("has is only valid for BridgeHand series")
+
+        def _has(card: str) -> pd.Series:
+            bit = _parse_card(card)
+            present = (arr._data & np.int64(1 << bit)) != 0
+            values = pd.array(present, dtype=pd.BooleanDtype())
+            if arr._mask.any():
+                values[arr._mask] = pd.NA
+            return pd.Series(values, index=series.index, name=series.name)
+
+        return _has
+
+    def __init__(self, series: pd.Series) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Generic card counting
 # ---------------------------------------------------------------------------
 
