@@ -49,8 +49,27 @@ See [`examples/`](examples/) for Jupyter notebooks:
 
 ## Installation
 
-```bash
-pip install -e python/
 ```
+# Create a virtual environment (optional but recommended)
+python -m venv venv
+source venv/bin/activate
 
-The double-dummy solver requires the `dds3` package (wraps the DDS library).
+# Download and compile DDS3.  Technically optional, but
+# you won't have much fun simulating without it.
+git clone https://github.com/dds-bridge/dds.git
+cd dds
+bazel build //python:dds_wheel_dist
+pip install bazel-bin/python/dds3-*-py3-none-any.whl
+cd ..
+
+# Install other useful packages
+pip install numpy         # required
+pip install pandas        # required
+pip install scipy         # not required, but needed for example notebooks
+pip install matplotlib    # not required, but needed for example notebooks
+pip install tqdm          # not required, but provides progress bars
+
+# Install our package
+pip install -e python/
+
+```
