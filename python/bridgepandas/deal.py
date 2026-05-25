@@ -22,6 +22,15 @@ class Deal:
     __slots__ = ("west", "north", "east", "south")
 
     def __init__(self, west, north=None, east=None, south=None):
+        """
+        Two calling forms:
+
+        ``Deal(west, north, east, south)`` — four hands as Hand, int, or hand string.
+
+        ``Deal(row)`` — a single DataFrame row (from ``df.itertuples()`` or
+        ``df.iloc[i]``); the row must have ``west``, ``north``, ``east``, ``south``
+        attributes or keys.  Prefer :meth:`from_row` for clarity.
+        """
         if north is None:
             row = west
             try:

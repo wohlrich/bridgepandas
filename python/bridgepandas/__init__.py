@@ -20,11 +20,9 @@ from bridgepandas.auction import (
     Call,
     Contract,
     DeclaredContract,
-    auction_next_to_call,
-    auction_to_contract,
 )
 from bridgepandas.scoring import (
-    declarer_vulnerable,
+    is_declarer_vulnerable,
     score,
     scorediff_imps,
     scorediff_matchpoints,
@@ -53,10 +51,8 @@ __all__ = [
     "Call",
     "Contract",
     "DeclaredContract",
-    "auction_next_to_call",
-    "auction_to_contract",
     # scoring
-    "declarer_vulnerable",
+    "is_declarer_vulnerable",
     "score",
     "scorediff_imps",
     "scorediff_matchpoints",

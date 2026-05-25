@@ -4,7 +4,7 @@ from .auction import Contract, DeclaredContract
 from .direction import Direction, TableVuln
 
 
-def declarer_vulnerable(declarer, vuln) -> bool:
+def is_declarer_vulnerable(declarer, vuln) -> bool:
     """
     Return whether *declarer* is vulnerable.
 
@@ -105,7 +105,7 @@ def score(contract, tricks: int, is_vulnerable: bool) -> int:
 
 
 __all__ = [
-    "declarer_vulnerable",
+    "is_declarer_vulnerable",
     "score",
     "scorediff_imps",
     "scorediff_matchpoints",
