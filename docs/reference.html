@@ -166,7 +166,7 @@ summary::-webkit-details-marker { display: none; }
 <body>
   <h1>bridgepandas</h1>
   <p class="subtitle">Click any item to expand. Classes in blue, functions in green, properties in orange.</p>
-  <details class="section" open><summary>Pandas DataFrames</summary><div class="section-body"><details class="item fn"><summary><code><span class="fn-name">random_deals</span>(n: &#x27;int&#x27;, west=None, north=None, east=None, south=None, accept=None, seed=None, fail_count: &#x27;int&#x27; = 100000) -&gt; &#x27;pd.DataFrame&#x27;</code></summary><div class="doc">Generate <em>n</em> random bridge deals, returned as a DataFrame.<br>
+  <details class="section" open><summary>Pandas DataFrames</summary><div class="section-body"><div class="narrative"><p>Every property and method available on <a href="#Hand"><code>Hand</code></a> can also be applied to a directional column of a DataFrame. For example, <code>df[df.west.spades &gt;= 5]</code> filters to deals where West holds at least five spades, and <code>df.north.hcp.mean()</code> gives the average HCP across North's hands.</p></div><details class="item fn"><summary><code><span class="fn-name">random_deals</span>(n: &#x27;int&#x27;, west=None, north=None, east=None, south=None, accept=None, seed=None, fail_count: &#x27;int&#x27; = 100000) -&gt; &#x27;pd.DataFrame&#x27;</code></summary><div class="doc">Generate <em>n</em> random bridge deals, returned as a DataFrame.<br>
 <br>
 Parameters<br>
 ----------<br>
@@ -177,16 +177,27 @@ west, north, east, south : optional<br>
 <br>
     - <code>None</code> — no constraint<br>
     - <code>str</code> — partial hand string <code>&quot;AK/Q/-/-&quot;</code> (S/H/D/C format, known cards)<br>
+    - <code>Hand</code> — fix that seat to an exact hand<br>
     - <code>int</code> — int64 bitmask of required cards<br>
     - <code>HandSet</code> — BDD constraint (enables fast BDD sampling)<br>
-    - <code>callable</code> — <code>f(hand_int) -&gt; bool</code> (forces slow accept/reject path)<br>
+    -- example: <code>(h.HCP &gt;= 15) &amp; (h.HCP &lt;= 17) &amp; (h.MATCH_SHAPE(&quot;any 4333 + any 4432 + any 5332&quot;)</code><br>
+    - <code>callable</code> — <code>f(Hand) -&gt; bool</code> (forces slow accept/reject path)<br>
+    -- example: <code>lambda h: h.hcp &gt;= 15 and h.hcp &lt;= 17 and h.shape in [(4,3,3,3),(4,4,3,2),(5,3,3,2)]</code><br>
+<br>
+    If none of the four directional constraints are <code>callable</code>, then<br>
+    fast sampling is used; however note that sometimes converting<br>
+    HandSets into DealSets (which happens internally) can have a one-time<br>
+    startup cost of a few seconds.  If any of them are <code>callable</code> then<br>
+    we use a sample/reject strategy, which can become slow if your<br>
+    criteria match only rare hands.<br>
 <br>
 accept : callable, optional<br>
-    <code>f(Deal) -&gt; bool</code> applied to each candidate deal. Forces slow path.<br>
+    <code>f(Deal) -&gt; bool</code> applied to each candidate deal as a post-filter.<br>
 seed : int or numpy.random.Generator, optional<br>
     RNG seed for reproducibility.<br>
 fail_count : int<br>
-    After this many consecutive failures before the first success, raise<br>
+    A safety valve to protect against impossible constraints;<br>
+    after this many consecutive failures before the first success, raise<br>
     <code>ValueError</code>.  <code>None</code> means no limit.</div></details>
 <details class="item fn"><summary><code><span class="fn-name">add_dds</span>(df: &#x27;pd.DataFrame&#x27;, contracts, col_name: &#x27;str&#x27;, vuln, progress: &#x27;bool&#x27; = True) -&gt; &#x27;None&#x27;</code></summary><div class="doc">Solve double-dummy and score each deal, adding the NS score as a new column.<br>
 <br>
@@ -287,42 +298,62 @@ Examples::<br>
 </div></details>
 </div></details>
 
-<details class="section" open><summary>Other Bridge Concept Classes</summary><div class="section-body"><details class="item cls" id="Auction"><summary><code><span class="kw">class</span> <span class="cls-name">Auction</span>(dealer, bids=None)</code></summary><div class="doc init-doc">Create a new Auction.  <em>bids</em> is an optional comma-separated call string.</div><div class="methods"><details class="item fn" id="Auction.add"><summary><code><span class="fn-name">add</span>(self, call)</code></summary></details>
-<details class="item fn" id="Auction.add_call"><summary><code><span class="fn-name">add_call</span>(self, call)</code></summary></details>
+<details class="section" open><summary>Other Bridge Concept Classes</summary><div class="section-body"><details class="item cls" id="Auction"><summary><code><span class="kw">class</span> <span class="cls-name">Auction</span>(dealer, bids=None)</code></summary><div class="doc">A sequence of calls in a bridge auction.<br>
+<br>
+Supports standard sequence operations: <code>len(auction)</code> returns the number<br>
+of calls made, <code>auction[i]</code> returns the <em>i</em>-th <code>Call</code>, and iterating<br>
+over an auction yields each <code>Call</code> in order.</div><div class="doc init-doc">Create a new Auction.  <em>bids</em> is an optional comma-separated call string.</div><div class="methods"><details class="item fn" id="Auction.add"><summary><code><span class="fn-name">add</span>(self, call)</code></summary><div class="doc">Add the next player&#x27;s call </div></details>
 <details class="item fn" id="Auction.clone"><summary><code><span class="fn-name">clone</span>(self)</code></summary></details>
 <details class="item fn" id="Auction.contract"><summary><code><span class="fn-name">contract</span>(self)</code></summary><div class="doc">Return the DeclaredContract, or None for a passout.  If the auction<br>
 is not yet finished, returns what the contract will be assuming<br>
 all players Pass from hereon.</div></details>
-<details class="item fn" id="Auction.done"><summary><code><span class="fn-name">done</span>(self) -&gt; bool</code></summary></details>
+<details class="item fn" id="Auction.done"><summary><code><span class="fn-name">done</span>(self) -&gt; bool</code></summary><div class="doc">Whether the auction is legally over </div></details>
 <details class="item fn" id="Auction.final_contract"><summary><code><span class="fn-name">final_contract</span>(self)</code></summary><div class="doc">Return the DeclaredContract, or None for a passout.  If the auction<br>
 is not yet finished, returns what the contract will be assuming<br>
 all players Pass from hereon.</div></details>
 <details class="item fn" id="Auction.legal_calls"><summary><code><span class="fn-name">legal_calls</span>(self)</code></summary><div class="doc">Return list of legal calls, or None if the auction is over.</div></details>
 <details class="item fn" id="Auction.min_bid"><summary><code><span class="fn-name">min_bid</span>(self)</code></summary><div class="doc">Lowest legal bid, or None if already at 7NT.</div></details>
 <details class="item fn" id="Auction.turn"><summary><code><span class="fn-name">turn</span>(self) -&gt; bridgepandas.direction.Direction</code></summary><div class="doc">Which direction is next to call.</div></details>
-<details class="item fn" id="Auction.undo"><summary><code><span class="fn-name">undo</span>(self)</code></summary></details>
-<details class="item fn" id="Auction.undo_call"><summary><code><span class="fn-name">undo_call</span>(self)</code></summary></details>
+<details class="item fn" id="Auction.undo"><summary><code><span class="fn-name">undo</span>(self)</code></summary><div class="doc">Undo the previous player&#x27;s call </div></details>
 </div></details>
-<details class="item cls" id="Bid"><summary><code><span class="kw">class</span> <span class="cls-name">Bid</span>(*args)</code></summary><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div><div class="methods"><details class="item fn" id="Bid.all_above"><summary><code><span class="fn-name">all_above</span>(self)</code></summary></details>
-<details class="item fn" id="Bid.all_bids"><summary><code><span class="fn-name">all_bids</span>()</code></summary></details>
-<details class="item fn" id="Bid.all_eq_above"><summary><code><span class="fn-name">all_eq_above</span>(self)</code></summary></details>
+<details class="item cls" id="Bid"><summary><code><span class="kw">class</span> <span class="cls-name">Bid</span>(*args)</code></summary><div class="doc">A class representing a Bid; a level and a strain.<br>
+<em>level</em> an <code>int</code> from 1 to 7<br>
+<em>strain</em> one of C, D, H, S, N.<br>
+Simple arithmateic is supported: Bid(&quot;3D&quot;) + 1 == Bid(&quot;3H&quot;) also<br>
+Bid(&quot;4D&quot;) - Bid(&quot;3NT&quot;) == 2</div><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div><div class="methods"><details class="item fn" id="Bid.all_above"><summary><code><span class="fn-name">all_above</span>(self)</code></summary><div class="doc">Generator returning all the bids strictly higher than this one </div></details>
+<details class="item fn" id="Bid.all_bids"><summary><code><span class="fn-name">all_bids</span>()</code></summary><div class="doc">Generator returning all the bids from 1C to 7N </div></details>
+<details class="item fn" id="Bid.all_eq_above"><summary><code><span class="fn-name">all_eq_above</span>(self)</code></summary><div class="doc">Generator returning all the bids starting from this one up to<br>
+7NT </div></details>
 <details class="item fn" id="Bid.cmp"><summary><code><span class="fn-name">cmp</span>(self, other) -&gt; int</code></summary></details>
 <details class="item fn" id="Bid.min_bid_strain"><summary><code><span class="fn-name">min_bid_strain</span>(self, strain: str) -&gt; &#x27;Bid&#x27;</code></summary><div class="doc">Return the lowest bid at or above self in the given strain.</div></details>
-<details class="item fn" id="Bid.step"><summary><code><span class="fn-name">step</span>(self) -&gt; int</code></summary></details>
 </div></details>
 <details class="item cls" id="Call"><summary><code><span class="kw">class</span> <span class="cls-name">Call</span>(value)</code></summary><div class="doc">A legal auction call: bid, Pass, Double, or Redouble.</div><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div><div class="methods"><details class="item fn" id="Call.is_bid"><summary><code><span class="fn-name">is_bid</span>(self) -&gt; bool</code></summary></details>
 <details class="item fn" id="Call.is_pass"><summary><code><span class="fn-name">is_pass</span>(self) -&gt; bool</code></summary></details>
 </div></details>
-<details class="item cls" id="Contract"><summary><code><span class="kw">class</span> <span class="cls-name">Contract</span>(spec)</code></summary><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div></details>
-<details class="item cls" id="DeclaredContract"><summary><code><span class="kw">class</span> <span class="cls-name">DeclaredContract</span>(*args)</code></summary><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div><div class="methods"><details class="item fn" id="DeclaredContract.ds"><summary><code><span class="fn-name">ds</span>(self) -&gt; str</code></summary><div class="doc">Two-character declarer+strain string, e.g. &#x27;NS&#x27;.</div></details>
+<details class="item cls" id="Contract"><summary><code><span class="kw">class</span> <span class="cls-name">Contract</span>(spec)</code></summary><div class="doc">Represents a contract; fields are available:<br>
+<em>level</em> the level of the contract<br>
+<em>tricks_needed</em> number of tricks to &quot;make&quot;<br>
+<em>strain</em> one of C,D,H,S,N<br>
+<em>double_state</em> 0 for undoubled, 1 for doubled, 2 for redoubled.</div><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div></details>
+<details class="item cls" id="DeclaredContract"><summary><code><span class="kw">class</span> <span class="cls-name">DeclaredContract</span>(*args)</code></summary><div class="doc">Represents a contract with a declarer; fields are available:<br>
+<em>level</em> the level of the contract<br>
+<em>tricks_needed</em> number of tricks to &quot;make&quot;<br>
+<em>strain</em> one of C,D,H,S,N<br>
+<em>double_state</em> 0 for undoubled, 1 for doubled, 2 for redoubled.<br>
+<em>declarer</em> a Direction indicating who is declarer.</div><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div><div class="methods"><details class="item fn" id="DeclaredContract.ds"><summary><code><span class="fn-name">ds</span>(self) -&gt; str</code></summary><div class="doc">Two-character declarer+strain string, e.g. &#x27;NS&#x27;.</div></details>
 </div></details>
-<details class="item cls" id="Direction"><summary><code><span class="kw">class</span> <span class="cls-name">Direction</span>(name)</code></summary><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div><div class="methods"><details class="item fn" id="Direction.all_dirs"><summary><code><span class="fn-name">all_dirs</span>() -&gt; list</code></summary></details>
-<details class="item fn" id="Direction.dir_pair"><summary><code><span class="fn-name">dir_pair</span>(self) -&gt; str</code></summary></details>
+<details class="item cls" id="Direction"><summary><code><span class="kw">class</span> <span class="cls-name">Direction</span>(name)</code></summary><div class="doc">A direction around the bridge table. You can initialize from a<br>
+<code>str</code>, one of W,N,E,S, or an <code>int</code> (west=0), or use the built in<br>
+directional constants like <code>Direction.WEST</code>.<br>
+<br>
+You can also say e.g.  <code>direction + 1</code> to get the next direction <br>
+around the table.</div><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div><div class="methods"><details class="item fn" id="Direction.all_dirs"><summary><code><span class="fn-name">all_dirs</span>() -&gt; list</code></summary><div class="doc">Static method returning a list of all directions </div></details>
+<details class="item fn" id="Direction.dir_pair"><summary><code><span class="fn-name">dir_pair</span>(self) -&gt; str</code></summary><div class="doc">Return either &quot;EW&quot; or &quot;NS&quot; </div></details>
 <details class="item fn" id="Direction.is_ew"><summary><code><span class="fn-name">is_ew</span>(self) -&gt; bool</code></summary></details>
 <details class="item fn" id="Direction.is_ns"><summary><code><span class="fn-name">is_ns</span>(self) -&gt; bool</code></summary></details>
-<details class="item fn" id="Direction.opp_side"><summary><code><span class="fn-name">opp_side</span>(self, other) -&gt; bool</code></summary></details>
-<details class="item fn" id="Direction.same_side"><summary><code><span class="fn-name">same_side</span>(self, other) -&gt; bool</code></summary></details>
-<details class="item fn" id="Direction.side_index"><summary><code><span class="fn-name">side_index</span>(self) -&gt; int</code></summary></details>
+<details class="item fn" id="Direction.opp_side"><summary><code><span class="fn-name">opp_side</span>(self, other) -&gt; bool</code></summary><div class="doc">Are these two directions opponents? </div></details>
+<details class="item fn" id="Direction.same_side"><summary><code><span class="fn-name">same_side</span>(self, other) -&gt; bool</code></summary><div class="doc">Are these two directions partners (or the same player) </div></details>
+<details class="item fn" id="Direction.side_index"><summary><code><span class="fn-name">side_index</span>(self) -&gt; int</code></summary><div class="doc">Return the direction as an int.  West=0 </div></details>
 </div></details>
 <details class="item cls" id="TableVuln"><summary><code><span class="kw">class</span> <span class="cls-name">TableVuln</span>(data)</code></summary><div class="doc init-doc">Initialize self.  See help(type(self)) for accurate signature.</div><div class="methods"><details class="item fn" id="TableVuln.all_vulns"><summary><code><span class="fn-name">all_vulns</span>() -&gt; list</code></summary></details>
 <details class="item fn" id="TableVuln.ew_vul"><summary><code><span class="fn-name">ew_vul</span>(self) -&gt; bool</code></summary></details>

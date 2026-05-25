@@ -4,15 +4,15 @@ from .auction import Contract, DeclaredContract
 from .direction import Direction, TableVuln
 
 
-def is_declarer_vulnerable(declarer, vuln) -> bool:
+def is_declarer_vulnerable(declarer, table_vuln) -> bool:
     """
     Return whether *declarer* is vulnerable.
 
     *declarer* is a Direction or W/N/E/S string.
-    *vuln* is a TableVuln object or any string accepted by TableVuln() (-, e, n, b, ew, ns, both, …).
+    *table_vuln* is a TableVuln object or any string accepted by TableVuln() (-, e, n, b, ew, ns, both, …).
     """
     d = Direction(declarer)
-    v = TableVuln(vuln)
+    v = TableVuln(table_vuln)
     return v.ns_vul() if d.is_ns() else v.ew_vul()
 
 

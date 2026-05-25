@@ -36,8 +36,16 @@ H_DEALSET = [
     ("h.NORTH(hs), h.SOUTH(hs), h.EAST(hs), h.WEST(hs)", "Apply a hand constraint to a specific seat to get a deal constraint."),
 ]
 
+_DATAFRAMES_PREAMBLE = (
+    '<p>Every property and method available on <a href="#Hand"><code>Hand</code></a> '
+    'can also be applied to a directional column of a DataFrame. '
+    'For example, <code>df[df.west.spades &gt;= 5]</code> filters to deals where '
+    'West holds at least five spades, and <code>df.north.hcp.mean()</code> gives '
+    "the average HCP across North's hands.</p>"
+)
+
 SECTIONS = [
-    ("Pandas DataFrames", [bp.random_deals, bp.add_dds]),
+    ("Pandas DataFrames", [bp.random_deals, bp.add_dds], _DATAFRAMES_PREAMBLE),
     ("Hand Sets", "handsets"),
     ("Deals & Hands", [bp.Deal, bp.Hand]),
     ("Other Bridge Concept Classes", [bp.Auction, bp.Bid, bp.Call, bp.Contract, bp.DeclaredContract, bp.Direction, bp.TableVuln]),
@@ -164,7 +172,7 @@ def render_handsets() -> str:
     )
 
 
-def render_section(title: str, items) -> str:
+def render_section(title: str, items, preamble: str = "") -> str:
     if items == "handsets":
         body = render_handsets()
     else:
@@ -172,10 +180,11 @@ def render_section(title: str, items) -> str:
             render_class(obj) if inspect.isclass(obj) else render_fn(obj)
             for obj in items
         )
+    pre = f'<div class="narrative">{preamble}</div>' if preamble else ""
     return (
         f'<details class="section" open>'
         f'<summary>{esc(title)}</summary>'
-        f'<div class="section-body">{body}</div>'
+        f'<div class="section-body">{pre}{body}</div>'
         f'</details>\n'
     )
 
@@ -368,7 +377,7 @@ HTML = """\
 
 
 def main():
-    body = "\n".join(render_section(title, items) for title, items in SECTIONS)
+    body = "\n".join(render_section(*entry) for entry in SECTIONS)
     out = ROOT / "docs" / "reference.html"
     out.write_text(HTML.format(css=CSS, body=body))
     print(f"Written: {out}")

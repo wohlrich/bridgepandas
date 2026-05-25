@@ -6,6 +6,13 @@ from .direction import Direction
 
 @total_ordering
 class Contract:
+    """ Represents a contract; fields are available:
+    *level* the level of the contract
+    *tricks_needed* number of tricks to "make"
+    *strain* one of C,D,H,S,N
+    *double_state* 0 for undoubled, 1 for doubled, 2 for redoubled.
+    """
+
     _RE = re.compile(r"([1-7])([CcDdHhSsNn]|NT|nt)([xX*]{0,2})$")
 
     def __init__(self, spec):
@@ -57,6 +64,13 @@ class Contract:
 
 @total_ordering
 class DeclaredContract:
+    """ Represents a contract with a declarer; fields are available:
+    *level* the level of the contract
+    *tricks_needed* number of tricks to "make"
+    *strain* one of C,D,H,S,N
+    *double_state* 0 for undoubled, 1 for doubled, 2 for redoubled.
+    *declarer* a Direction indicating who is declarer.
+    """
     _RE = re.compile(r"([1-7])([CcDdHhSsNn]|NT|nt)([x*]{0,2})-([WNES])$")
 
     def __init__(self, *args):
@@ -129,6 +143,13 @@ class DeclaredContract:
 
 @total_ordering
 class Bid:
+    """ A class representing a Bid; a level and a strain.
+    *level* an ``int`` from 1 to 7
+    *strain* one of C, D, H, S, N.
+    Simple arithmateic is supported: Bid("3D") + 1 == Bid("3H") also
+    Bid("4D") - Bid("3NT") == 2
+    """
+
     STRAINS = ["C", "D", "H", "S", "N"]
 
     def __init__(self, *args):
@@ -157,7 +178,7 @@ class Bid:
         if self.strain not in Bid.STRAINS:
             raise ValueError(f"Bad strain {self.strain!r}")
 
-    def step(self) -> int:
+    def _step(self) -> int:
         return self.level * 5 + Bid.STRAINS.index(self.strain) - 5
 
     def cmp(self, other) -> int:
@@ -168,7 +189,7 @@ class Bid:
                 other = other.bid
             else:
                 return 1
-        return self.step() - Bid(other).step()
+        return self._step() - Bid(other)._step()
 
     def min_bid_strain(self, strain: str) -> "Bid":
         """Return the lowest bid at or above self in the given strain."""
@@ -184,6 +205,7 @@ class Bid:
 
     @staticmethod
     def all_bids():
+        """ Generator returning all the bids from 1C to 7N """
         cur = Bid("1C")
         top = Bid("7N")
         while True:
@@ -193,10 +215,13 @@ class Bid:
             cur = cur + 1
 
     def all_eq_above(self):
+        """ Generator returning all the bids starting from this one up to
+        7NT """
         yield self
         yield from self.all_above()
 
     def all_above(self):
+        """ Generator returning all the bids strictly higher than this one """
         cur = self
         top = Bid("7N")
         while cur < top:
@@ -214,19 +239,19 @@ class Bid:
     def __add__(self, other):
         if not isinstance(other, int):
             raise TypeError()
-        n = self.step() + other
+        n = self._step() + other
         if not (0 <= n < 35):
             raise ValueError("Out of bounds")
         return Bid(n // 5 + 1, Bid.STRAINS[n % 5])
 
     def __sub__(self, other):
         if isinstance(other, int):
-            n = self.step() - other
+            n = self._step() - other
             if not (0 <= n < 35):
                 raise ValueError("Out of bounds")
             return Bid(n // 5 + 1, Bid.STRAINS[n % 5])
         elif isinstance(other, Bid):
-            return self.step() - other.step()
+            return self._step() - other._step()
         raise TypeError()
 
     def __str__(self):
@@ -297,6 +322,13 @@ Call.REDOUBLE = Call("R")
 
 
 class Auction:
+    """A sequence of calls in a bridge auction.
+
+    Supports standard sequence operations: ``len(auction)`` returns the number
+    of calls made, ``auction[i]`` returns the *i*-th ``Call``, and iterating
+    over an auction yields each ``Call`` in order.
+    """
+
     def __init__(self, dealer, bids=None):
         """
         Create a new Auction.  *bids* is an optional comma-separated call string.
@@ -314,7 +346,7 @@ class Auction:
 
         if bids:
             for call in bids.split(","):
-                self.add_call(call)
+                self.all(call)
 
     def __iter__(self):
         return iter(self._all_calls)
@@ -331,7 +363,7 @@ class Auction:
     def clone(self):
         out = Auction(self.dealer)
         for call in self._all_calls:
-            out.add_call(call)
+            out.all(call)
         return out
 
     def turn(self) -> Direction:
@@ -339,6 +371,7 @@ class Auction:
         return self._next_dir
 
     def done(self) -> bool:
+        """ Whether the auction is legally over """
         if self._last_bid is None and self._num_passes == 4:
             return True
         if self._last_bid is not None and self._num_passes == 3:
@@ -358,7 +391,8 @@ class Auction:
 
     contract = final_contract
 
-    def add_call(self, call):
+    def add(self, call):
+        """ Add the next player's call """
         call = Call(call)
         lc = self.legal_calls()
         if lc is None:
@@ -398,9 +432,8 @@ class Auction:
         self._num_passes = 0
         return self
 
-    add = add_call
-
-    def undo_call(self):
+    def undo(self):
+        """ Undo the previous player's call """
         if not self._all_calls:
             raise ValueError("No calls to undo")
         self._next_dir -= 1
@@ -412,7 +445,6 @@ class Auction:
             if off.bid == fbid:
                 del self._first_strain_calls[key]
         return self
-    undo = undo_call
 
     def legal_calls(self):
         """Return list of legal calls, or None if the auction is over."""

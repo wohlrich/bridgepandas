@@ -1,4 +1,12 @@
 class Direction:
+    """ A direction around the bridge table. You can initialize from a
+    ``str``, one of W,N,E,S, or an ``int`` (west=0), or use the built in
+    directional constants like ``Direction.WEST``.
+
+    You can also say e.g.  ``direction + 1`` to get the next direction 
+    around the table."""
+
+
     ALL = "WNES"  # W=0, N=1, E=2, S=3 — clockwise, even=EW, odd=NS
 
     def __init__(self, name):
@@ -36,15 +44,19 @@ class Direction:
         return hash(self.i)
 
     def same_side(self, other) -> bool:
+        """ Are these two directions partners (or the same player) """
         return (self.i & 1) == (Direction(other).i & 1)
 
     def opp_side(self, other) -> bool:
+        """ Are these two directions opponents? """
         return (self.i & 1) != (Direction(other).i & 1)
 
     def dir_pair(self) -> str:
+        """ Return either "EW" or "NS" """
         return ("EW", "NS", "EW", "NS")[self.i]
 
     def side_index(self) -> int:
+        """ Return the direction as an int.  West=0 """
         return self.i & 1
 
     def is_ew(self) -> bool:
@@ -55,6 +67,7 @@ class Direction:
 
     @staticmethod
     def all_dirs() -> list:
+        """ Static method returning a list of all directions """
         return [Direction(i) for i in range(4)]
 
 
@@ -118,7 +131,7 @@ class TableVuln:
 
 
 def board_number_to_dealer_vuln(num: int):
-    """Return (dealer: Direction, vuln: TableVuln) for a board number (1-based)."""
+    """Return the tuple (dealer: Direction, vuln: TableVuln) for a board number (1-based)."""
     n = (num + 15) % 16
     d = n % 4
     v = (d + (n // 4)) % 4

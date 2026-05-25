@@ -198,14 +198,22 @@ def random_deals(
 
         - ``None`` — no constraint
         - ``str`` — partial hand string ``"AK/Q/-/-"`` (S/H/D/C format, known cards)
+        - ``Hand`` — fix that seat to an exact hand
         - ``int`` — int64 bitmask of required cards
         - ``HandSet`` — BDD constraint (enables fast BDD sampling)
+        -- example: ``(h.HCP >= 15) & (h.HCP <= 17) & (h.MATCH_SHAPE("any 4333 + any 4432 + any 5332")``
         - ``callable`` — ``f(Hand) -> bool`` (forces slow accept/reject path)
+        -- example: ``lambda h: h.hcp >= 15 and h.hcp <= 17 and h.shape in [(4,3,3,3),(4,4,3,2),(5,3,3,2)]``
+
+        If none of the four directional constraints are ``callable``, then
+        fast sampling is used; however note that sometimes converting
+        HandSets into DealSets (which happens internally) can have a one-time
+        startup cost of a few seconds.  If any of them are ``callable`` then
+        we use a sample/reject strategy, which can become slow if your
+        criteria match only rare hands.
 
     accept : callable, optional
         ``f(Deal) -> bool`` applied to each candidate deal as a post-filter.
-        BDD sampling is still used when the per-hand specs allow it; the slow
-        accept/reject path is only used when a per-hand spec is itself a callable.
     seed : int or numpy.random.Generator, optional
         RNG seed for reproducibility.
     fail_count : int
