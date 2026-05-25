@@ -258,7 +258,7 @@ def add_dds(
         Strings are parsed as DeclaredContract (e.g. ``"3N-N"``, ``"4Sx-E"``).
     col_name : str
         Name of the column to add (or overwrite) in *df*.
-    vuln : str | Vuln | pd.Series
+    vuln : str | TableVuln | pd.Series
         Vulnerability. A scalar is applied to every row; a Series supplies
         per-row values.
     progress : bool

@@ -10,7 +10,7 @@ from bridgepandas.deal import Deal, random_deals
 from bridgepandas.handset import h
 from bridgepandas.direction import (
     Direction,
-    Vuln,
+    TableVuln,
     board_number_to_dealer_vuln,
     dealer_vuln_to_board_number,
 )
@@ -44,7 +44,7 @@ __all__ = [
     "RANKS",
     # direction / vulnerability
     "Direction",
-    "Vuln",
+    "TableVuln",
     "board_number_to_dealer_vuln",
     "dealer_vuln_to_board_number",
     # auction

@@ -1,7 +1,7 @@
 import bisect
 
 from .auction import Contract, DeclaredContract
-from .direction import Direction, Vuln
+from .direction import Direction, TableVuln
 
 
 def declarer_vulnerable(declarer, vuln) -> bool:
@@ -9,10 +9,10 @@ def declarer_vulnerable(declarer, vuln) -> bool:
     Return whether *declarer* is vulnerable.
 
     *declarer* is a Direction or W/N/E/S string.
-    *vuln* is a Vuln object or any string accepted by Vuln() (-, e, n, b, ew, ns, both, …).
+    *vuln* is a TableVuln object or any string accepted by TableVuln() (-, e, n, b, ew, ns, both, …).
     """
     d = Direction(declarer)
-    v = Vuln(vuln)
+    v = TableVuln(vuln)
     return v.ns_vul() if d.is_ns() else v.ew_vul()
 
 
@@ -37,29 +37,29 @@ def scorediff_matchpoints(diff: int) -> float:
     return 0.5
 
 
-def score_ns(declared_contract: str|DeclaredContract, tricks: int,
-             vulnerable: str|Vuln) -> int:
+def score_ns(declared_contract: str|DeclaredContract, declarer_tricks: int,
+             table_vulnerable: str|TableVuln) -> int:
     dc = DeclaredContract(declared_contract)
-    vul = Vuln(vulnerable)
+    vul = TableVuln(table_vulnerable)
     dec_score = score(dc, tricks, vul.is_vul(dc.declarer))
     if dc.declarer.is_ew():
         return -dec_score
     else:
         return dec_score
 
-def score(contract, tricks: int, vulnerable: bool) -> int:
+def score(contract, tricks: int, is_vulnerable: bool) -> int:
     """
     Return the declarer's score for making *tricks* tricks in *contract*.
 
     *contract* is a Contract, DeclaredContract, Bid, or string like "3Nx".
     *tricks* is the total tricks taken (0–13).
-    *vulnerable* is a bool.
+    *is_vulnerable* is a bool.
     """
     con = Contract(contract)
 
     if tricks < con.tricks_needed:
         shortfall = con.tricks_needed - tricks
-        if vulnerable:
+        if is_vulnerable:
             if con.double_state == 0:
                 return -100 * shortfall
             else:
@@ -83,11 +83,11 @@ def score(contract, tricks: int, vulnerable: bool) -> int:
     btl *= 2 ** con.double_state
 
     if con.level == 7:
-        bonus = 2000 if vulnerable else 1300
+        bonus = 2000 if is_vulnerable else 1300
     elif con.level == 6:
-        bonus = 1250 if vulnerable else 800
+        bonus = 1250 if is_vulnerable else 800
     elif btl >= 100:
-        bonus = 500 if vulnerable else 300
+        bonus = 500 if is_vulnerable else 300
     else:
         bonus = 50
 
@@ -95,7 +95,7 @@ def score(contract, tricks: int, vulnerable: bool) -> int:
 
     overtricks = tricks - con.tricks_needed
     if con.double_state > 0:
-        bonus += overtricks * con.double_state * (200 if vulnerable else 100)
+        bonus += overtricks * con.double_state * (200 if is_vulnerable else 100)
     elif con.strain in "CcDd":
         bonus += overtricks * 20
     else:

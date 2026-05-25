@@ -64,7 +64,7 @@ Direction.EAST  = Direction("E")
 Direction.SOUTH = Direction("S")
 
 
-class Vuln:
+class TableVuln:
     EW_BIT = 2
     NS_BIT = 1
 
@@ -78,23 +78,23 @@ class Vuln:
     def __init__(self, data):
         if isinstance(data, int):
             if data < 0 or data > 3:
-                raise ValueError("Vuln int must be 0–3")
+                raise ValueError("TableVuln int must be 0–3")
             self.data = data
         elif isinstance(data, str):
             lc = data.lower()
-            if lc not in Vuln._TABLE:
+            if lc not in TableVuln._TABLE:
                 raise ValueError(f"Unknown vulnerability {data!r}; use -, e, n, b, ew, ns, both")
-            self.data = Vuln._TABLE[lc]
-        elif isinstance(data, Vuln):
+            self.data = TableVuln._TABLE[lc]
+        elif isinstance(data, TableVuln):
             self.data = data.data
         else:
-            raise TypeError(f"Cannot construct Vuln from {type(data)}")
+            raise TypeError(f"Cannot construct TableVuln from {type(data)}")
 
     def ew_vul(self) -> bool:
-        return bool(self.data & Vuln.EW_BIT)
+        return bool(self.data & TableVuln.EW_BIT)
 
     def ns_vul(self) -> bool:
-        return bool(self.data & Vuln.NS_BIT)
+        return bool(self.data & TableVuln.NS_BIT)
 
     def is_vul(self, direction) -> bool:
         d = Direction(direction)
@@ -104,38 +104,38 @@ class Vuln:
         return "-neb"[self.data]
 
     def __repr__(self):
-        return f"Vuln({str(self)!r})"
+        return f"TableVuln({str(self)!r})"
 
     def __eq__(self, other):
-        return isinstance(other, Vuln) and self.data == other.data
+        return isinstance(other, TableVuln) and self.data == other.data
 
     def __hash__(self):
         return hash(self.data)
 
     @staticmethod
     def all_vulns() -> list:
-        return [Vuln(i) for i in range(4)]
+        return [TableVuln(i) for i in range(4)]
 
 
 def board_number_to_dealer_vuln(num: int):
-    """Return (dealer: Direction, vuln: Vuln) for a board number (1-based)."""
+    """Return (dealer: Direction, vuln: TableVuln) for a board number (1-based)."""
     n = (num + 15) % 16
     d = n % 4
     v = (d + (n // 4)) % 4
-    return Direction.NORTH + d, Vuln("-neb"[v])
+    return Direction.NORTH + d, TableVuln("-neb"[v])
 
 
 def dealer_vuln_to_board_number(dealer, vuln) -> int:
     """Return the board number (1-based) for a given dealer and vulnerability."""
     dix = (Direction(dealer).i - Direction.NORTH.i) & 3
-    vix = Vuln(vuln).data
+    vix = TableVuln(vuln).data
     delta = (vix + 4 - dix) % 4
     return 1 + delta * 4 + dix
 
 
 __all__ = [
     "Direction",
-    "Vuln",
+    "TableVuln",
     "board_number_to_dealer_vuln",
     "dealer_vuln_to_board_number",
 ]
