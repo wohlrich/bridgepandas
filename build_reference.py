@@ -19,6 +19,7 @@ H_NUMERIC = [
     ("h.ACES, h.KINGS, h.QUEENS, h.JACKS, h.TENS", "Count of that honor held."),
     ("h.TOP2 … h.TOP5", "Count of top-2 through top-5 honors held across all suits."),
     ("h.QUICK_TRICKS_X2", "Quick tricks × 2 (integer): AK=4, AQ=3, A=2, KQ=2, Kx=1. Compare as <code>h.QUICK_TRICKS_X2 &gt;= 3</code> for ≥1.5 quick tricks."),
+    ("h.LOSERS", "Losing trick count (0–12): up to 3 losers per suit, reduced by A, K (if length ≥ 2), Q (if length ≥ 3)."),
     ("h.LONGEST_SUIT, h.SECOND_SUIT, h.SHORTEST_SUIT", "Length of the longest / 2nd-longest / shortest suit."),
     ("h.VOIDS, h.SINGLETONS, h.DOUBLETONS", "Number of suits with exactly 0, 1, or 2 cards."),
     ("h.NUM(spec)", 'Count of cards matching a spec — same syntax as <a href="#Hand.num"><code>Hand.num()</code></a>, e.g. <code>h.NUM("A")</code> counts aces.'),

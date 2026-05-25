@@ -467,6 +467,45 @@ class SuitLengthCountMetric(HandSetMetric):
         super().__init__(values)
 
 
+class LosersMetric(HandSetMetric):
+    """Classic losing trick count (0–12) as a HandSetMetric."""
+
+    def __init__(self):
+        suit_val_lists = [LosersMetric._suit_loser_bdds(s).items() for s in "SHDC"]
+        values: dict[int, BDD] = {}
+        for combo in itertools.product(*suit_val_lists):
+            key = sum(x[0] for x in combo)
+            val = functools.reduce(BDD.__and__, [x[1] for x in combo])
+            values[key] = values[key] | val if key in values else val
+        super().__init__(values)
+
+    @staticmethod
+    def _suit_loser_bdds(suit: str) -> dict[int, BDD]:
+        suit_cards = [(i, c) for i, c in enumerate(_BDD_CARDS) if c.suit == suit]
+        # state: (length, has_A, has_K, has_Q) → BDD
+        state: dict[tuple, BDD] = {(0, False, False, False): BDD.true()}
+        for i, card in reversed(suit_cards):
+            var = BDD(i)
+            new_state: dict[tuple, BDD] = {}
+            for (length, has_a, has_k, has_q), bdd in state.items():
+                k_no = (length, has_a, has_k, has_q)
+                b_no = bdd & ~var
+                new_state[k_no] = new_state[k_no] | b_no if k_no in new_state else b_no
+                k_yes = (length + 1, has_a or card.rank == 'A',
+                         has_k or card.rank == 'K', has_q or card.rank == 'Q')
+                b_yes = bdd & var
+                new_state[k_yes] = new_state[k_yes] | b_yes if k_yes in new_state else b_yes
+            state = new_state
+        result: dict[int, BDD] = {}
+        for (length, has_a, has_k, has_q), bdd in state.items():
+            n = min(3, length)
+            if has_a:                 n -= 1
+            if has_k and length >= 2: n -= 1
+            if has_q and length >= 3: n -= 1
+            result[n] = result[n] | bdd if n in result else bdd
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Lazy class-level constant
 # ---------------------------------------------------------------------------
@@ -540,6 +579,7 @@ class hand_makers:
     TOP5   = lazy_const(lambda: SimpleHandMetric({Card(s,r): 1 for s in "SHDC" for r in "AKQJT"}))
 
     QUICK_TRICKS_X2 = lazy_const(lambda: QuickTricksMetric())
+    LOSERS          = lazy_const(lambda: LosersMetric())
 
     # Ordered shape
     LONGEST_SUIT        = lazy_const(lambda: OrderedLengthMetric(3))
