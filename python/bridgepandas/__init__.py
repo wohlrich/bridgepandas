@@ -29,17 +29,20 @@ from bridgepandas.scoring import (
 )
 from bridgepandas.dds import solve, add_dds
 
+__pdoc__ = {
+    "BridgeHandArray": False,
+    "BridgeHandDtype": False,
+    "hand_str_to_int": False,
+    "int_to_hand_str": False,
+    "RANKS": False,
+}
+
 __all__ = [
     # hands / deals
-    "BridgeHandArray",
-    "BridgeHandDtype",
     "Deal",
     "Hand",
     "h",
-    "hand_str_to_int",
-    "int_to_hand_str",
     "random_deals",
-    "RANKS",
     # direction / vulnerability
     "Direction",
     "TableVuln",
