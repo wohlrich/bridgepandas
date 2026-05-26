@@ -326,7 +326,7 @@ class Hand(int):
 
             hand.match_shape("any 5332")          # any 5-3-3-2 distribution
             hand.match_shape("4432 + 4333")        # either shape
-            hand.match_shape("44xx - 4450")        # 4-4 majors, not 4-4-5-0
+            hand.match_shape("44xx - 4450")        # 4-4 majors, but not 4=4=5=0
         """
         return self.pattern in parse_shape_spec(spec)
 
