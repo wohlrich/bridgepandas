@@ -235,15 +235,116 @@ def _dds_key(dc) -> str:
     return str(dc.declarer) + dc.strain
 
 
-def add_dds(
+def _normalize_dds_inputs(df, contracts, col_names, columns, suffix):
+    """Return (sources, out_names) where sources = list of (dc_list, auto_name)."""
+    from .auction import DeclaredContract
+
+    if contracts is not None and columns is not None:
+        raise ValueError("Specify contracts or columns, not both")
+
+    n = len(df)
+    sources: list[tuple[list, str | None]] = []
+
+    if columns is not None:
+        col_list = [columns] if isinstance(columns, str) else list(columns)
+        for col in col_list:
+            sources.append(([DeclaredContract(c) for c in df[col]], col + suffix))
+    else:
+        if contracts is None:
+            raise ValueError("Must specify contracts or columns")
+        items = [contracts] if isinstance(contracts, (str, DeclaredContract, pd.Series)) else list(contracts)
+        for c in items:
+            if isinstance(c, pd.Series):
+                dc_list = [DeclaredContract(x) for x in c]
+                auto_name = (str(c.name) + suffix) if c.name is not None else None
+            else:
+                dc = DeclaredContract(c)
+                dc_list = [dc] * n
+                auto_name = str(dc) + suffix
+            sources.append((dc_list, auto_name))
+
+    if col_names is not None:
+        out_names = [col_names] if isinstance(col_names, str) else list(col_names)
+        if len(out_names) != len(sources):
+            raise ValueError(
+                f"col_names has {len(out_names)} entries but {len(sources)} contract source(s) given"
+            )
+    else:
+        out_names = []
+        for _, auto_name in sources:
+            if auto_name is None:
+                raise ValueError("A pd.Series with no name was given; specify col_names explicitly")
+            out_names.append(auto_name)
+
+    return sources, out_names
+
+
+def _solve_into_cache(df, sources, progress):
+    """Ensure all keys needed by *sources* are present in the ``_dds`` cache."""
+    n = len(df)
+    if "_dds" not in df.columns:
+        df["_dds"] = [dict() for _ in range(n)]
+    cache = df["_dds"]
+
+    for dc_list, _ in sources:
+        keys = [_dds_key(dc) for dc in dc_list]
+        needs_solve = [i for i in range(n) if keys[i] not in cache.iat[i]]
+
+        if needs_solve:
+            trump_arr  = np.empty(n, dtype=np.int8)
+            leader_arr = np.empty(n, dtype=np.int8)
+            for i in needs_solve:
+                dc = dc_list[i]
+                trump_arr[i]  = _TRUMP_MAP[dc.strain]
+                leader_arr[i] = _LEADER_MAP[str(dc.declarer + 1)]
+
+            sub_df = df.iloc[needs_solve]
+            leader_tricks = _solve_batch(
+                sub_df, trump_arr[needs_solve], leader_arr[needs_solve], progress=progress
+            )
+
+            for j, i in enumerate(needs_solve):
+                cache.iat[i][keys[i]] = 13 - int(leader_tricks[j])
+
+    return cache
+
+
+_CONTRACTS_DOC = """\
+    contracts : str | DeclaredContract | pd.Series, or list thereof
+        One or more contract sources.  A scalar str/DeclaredContract is applied
+        to every row; a pd.Series supplies per-row contracts.  Strings are
+        parsed as DeclaredContract (e.g. ``"3N-N"``, ``"4Sx-E"``).
+        Mutually exclusive with *columns*.
+    col_names : str | list[str], optional
+        Output column name(s).  If omitted the name is derived automatically:
+        contract str/DeclaredContract → ``str(contract) + suffix``,
+        pd.Series with a name → ``series.name + suffix``,
+        column name (via *columns*) → ``column_name + suffix``.
+        A nameless pd.Series without an explicit *col_names* entry raises
+        ValueError.
+    columns : str | list[str], optional
+        Column name(s) in *df* whose values are contracts (str or
+        DeclaredContract).  Each column produces one output column.
+        Mutually exclusive with *contracts*.
+    suffix : str
+        Appended to auto-derived output column names.
+    progress : bool
+        Show a progress bar (requires tqdm; silently skipped if not installed).\
+"""
+
+
+def add_dds_score(
     df: pd.DataFrame,
-    contracts,
-    col_name: str,
-    vuln,
+    contracts=None,
+    col_names=None,
+    vuln=None,
+    *,
+    columns=None,
+    suffix: str = "_score",
     progress: bool = True,
 ) -> None:
     """
-    Solve double-dummy and score each deal, adding the NS score as a new column.
+    Solve double-dummy and score each deal, adding NS score column(s) to *df*.
 
     Results are cached in a ``_dds`` column (dict per row, keyed by
     declarer+strain e.g. ``"NH"``) so repeated calls for the same
@@ -253,58 +354,56 @@ def add_dds(
     ----------
     df : DataFrame
         Must have columns 'north', 'east', 'south', 'west'. Modified in place.
-    contracts : str | DeclaredContract | pd.Series
-        A single contract applied to every row, or a per-row Series.
-        Strings are parsed as DeclaredContract (e.g. ``"3N-N"``, ``"4Sx-E"``).
-    col_name : str
-        Name of the column to add (or overwrite) in *df*.
+""" + _CONTRACTS_DOC + """
     vuln : str | TableVuln | pd.Series
         Vulnerability. A scalar is applied to every row; a Series supplies
-        per-row values.
-    progress : bool
-        Show a progress bar (requires tqdm; silently skipped if not installed).
+        per-row values.  Required.
     """
-    from .auction import DeclaredContract
     from .scoring import score_ns
 
+    if vuln is None:
+        raise ValueError("vuln is required")
+
     n = len(df)
+    sources, out_names = _normalize_dds_inputs(df, contracts, col_names, columns, suffix)
+    cache = _solve_into_cache(df, sources, progress)
 
-    # Normalise contracts to a list of DeclaredContract
-    if isinstance(contracts, pd.Series):
-        dc_list = [DeclaredContract(c) for c in contracts]
-    else:
-        dc = DeclaredContract(contracts)
-        dc_list = [dc] * n
-
-    # Ensure the cache column exists
-    if "_dds" not in df.columns:
-        df["_dds"] = [dict() for _ in range(n)]
-
-    # Build per-row cache keys and find rows not yet solved
-    keys = [_dds_key(dc) for dc in dc_list]
-    cache = df["_dds"]
-    needs_solve = [i for i in range(n) if keys[i] not in cache.iat[i]]
-
-    if needs_solve:
-        # Build trump/leader arrays only for the rows that need solving
-        trump_arr  = np.empty(n, dtype=np.int8)
-        leader_arr = np.empty(n, dtype=np.int8)
-        for i in needs_solve:
-            dc = dc_list[i]
-            trump_arr[i]  = _TRUMP_MAP[dc.strain]
-            leader_arr[i] = _LEADER_MAP[str(dc.declarer + 1)]
-
-        sub_df = df.iloc[needs_solve]
-        leader_tricks = _solve_batch(sub_df, trump_arr[needs_solve], leader_arr[needs_solve], progress=progress)
-
-        for j, i in enumerate(needs_solve):
-            cache.iat[i][keys[i]] = 13 - int(leader_tricks[j])
-
-    # Score from NS perspective using cached trick counts
     vuln_series = vuln if isinstance(vuln, pd.Series) else None
-    scores = np.empty(n, dtype=np.int32)
-    for i, dc in enumerate(dc_list):
-        v = vuln_series.iloc[i] if vuln_series is not None else vuln
-        scores[i] = score_ns(dc, cache.iat[i][keys[i]], v)
+    for (dc_list, _), out_col in zip(sources, out_names):
+        keys = [_dds_key(dc) for dc in dc_list]
+        scores = np.empty(n, dtype=np.int32)
+        for i, dc in enumerate(dc_list):
+            v = vuln_series.iloc[i] if vuln_series is not None else vuln
+            scores[i] = score_ns(dc, cache.iat[i][keys[i]], v)
+        df[out_col] = scores
 
-    df[col_name] = scores
+
+def add_dds_tricks(
+    df: pd.DataFrame,
+    contracts=None,
+    col_names=None,
+    *,
+    columns=None,
+    suffix: str = "_tricks",
+    progress: bool = True,
+) -> None:
+    """
+    Solve double-dummy and add declarer trick-count column(s) to *df*.
+
+    Results are cached in a ``_dds`` column (dict per row, keyed by
+    declarer+strain e.g. ``"NH"``) so repeated calls for the same
+    declarer/strain combination skip the solver entirely.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Must have columns 'north', 'east', 'south', 'west'. Modified in place.
+""" + _CONTRACTS_DOC + """
+    """
+    n = len(df)
+    sources, out_names = _normalize_dds_inputs(df, contracts, col_names, columns, suffix)
+    cache = _solve_into_cache(df, sources, progress)
+
+    for (dc_list, _), out_col in zip(sources, out_names):
+        keys = [_dds_key(dc) for dc in dc_list]
+        df[out_col] = [cache.iat[i][keys[i]] for i in range(n)]

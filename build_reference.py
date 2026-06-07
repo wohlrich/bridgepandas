@@ -46,7 +46,7 @@ _DATAFRAMES_PREAMBLE = (
 )
 
 SECTIONS = [
-    ("Pandas DataFrames", [bp.random_deals, bp.add_dds], _DATAFRAMES_PREAMBLE),
+    ("Pandas DataFrames", [bp.random_deals, bp.add_dds_score, bp.add_dds_tricks], _DATAFRAMES_PREAMBLE),
     ("Hand Sets", "handsets"),
     ("Deals & Hands", [bp.Deal, bp.Hand]),
     ("Other Bridge Concept Classes", [bp.Auction, bp.Bid, bp.Call, bp.Contract, bp.DeclaredContract, bp.Direction, bp.TableVuln]),

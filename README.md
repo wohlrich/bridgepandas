@@ -33,8 +33,8 @@ def accept(deal):
 df = bp.random_deals(500, south=hs, accept=accept, seed=1)
 
 # Double-dummy scoring
-bp.add_dds(df, '3N-S', 'score_3nt', '-')   # neither vulnerable
-bp.add_dds(df, '4S-S', 'score_4s',  'ns')  # NS vulnerable
+bp.add_dds_score(df, '3N-S', 'score_3nt', '-')   # neither vulnerable
+bp.add_dds_score(df, '4S-S', 'score_4s',  'ns')  # NS vulnerable
 
 # IMP differential
 df['imps'] = (df['score_3nt'] - df['score_4s']).map(bp.scorediff_imps)
@@ -58,7 +58,7 @@ source venv/bin/activate
 # you won't have much fun simulating without it.
 git clone https://github.com/dds-bridge/dds.git
 cd dds
-bazel build //python:dds_wheel_dist
+bazel build //python:dds3_wheel_dist
 pip install bazel-bin/python/dds3-*-py3-none-any.whl
 cd ..
 
