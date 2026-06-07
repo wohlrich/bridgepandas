@@ -105,26 +105,19 @@ def _hand_to_pbn(north: int, east: int, south: int, west: int) -> bytes:
 # Core batch solver (leader-side tricks)
 # ---------------------------------------------------------------------------
 
-def _solve_batch(
-    df: pd.DataFrame,
+def _solve_arrays(
+    north: np.ndarray,
+    east: np.ndarray,
+    south: np.ndarray,
+    west: np.ndarray,
     trump_arr: np.ndarray,
     leader_arr: np.ndarray,
-    progress: bool = True,
+    progress: bool = False,
 ) -> np.ndarray:
-    """
-    Solve all rows, returning int8 array of tricks for the *leader's* side.
-
-    trump_arr and leader_arr are int arrays of length len(df) with per-row
-    DDS trump (0-4) and DDS first (0-3) values.
-    """
+    """Solve boards given raw hand and trump/leader arrays; return leader-side tricks."""
     lib = _get_lib()
-    n_rows = len(df)
+    n_rows = len(north)
     results = np.empty(n_rows, dtype=np.int8)
-
-    north_vals = np.asarray(df["north"], dtype=np.int64)
-    east_vals  = np.asarray(df["east"],  dtype=np.int64)
-    south_vals = np.asarray(df["south"], dtype=np.int64)
-    west_vals  = np.asarray(df["west"],  dtype=np.int64)
 
     boards = _BoardsPBN()
     solved = _SolvedBoards()
@@ -146,10 +139,10 @@ def _solve_batch(
             for i in range(count):
                 idx = start + i
                 pbn = _hand_to_pbn(
-                    int(north_vals[idx]),
-                    int(east_vals[idx]),
-                    int(south_vals[idx]),
-                    int(west_vals[idx]),
+                    int(north[idx]),
+                    int(east[idx]),
+                    int(south[idx]),
+                    int(west[idx]),
                 )
                 d = boards.deals[i]
                 d.trump = int(trump_arr[idx])
@@ -175,6 +168,62 @@ def _solve_batch(
             pbar.close()
 
     return results
+
+
+def _solve_chunk_worker(args):
+    return _solve_arrays(*args)
+
+
+def _solve_parallel(north, east, south, west, trump_arr, leader_arr, processes, progress):
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    k = len(north)
+    chunk_size = int(np.ceil(k / processes))
+    chunks = [
+        (north[s:s+chunk_size], east[s:s+chunk_size],
+         south[s:s+chunk_size], west[s:s+chunk_size],
+         trump_arr[s:s+chunk_size], leader_arr[s:s+chunk_size])
+        for s in range(0, k, chunk_size)
+    ]
+
+    results = [None] * len(chunks)
+
+    pbar = None
+    if progress:
+        try:
+            from tqdm.auto import tqdm
+            pbar = tqdm(total=len(chunks), desc="DDS", unit="chunk")
+        except ImportError:
+            pass
+
+    try:
+        with ProcessPoolExecutor(max_workers=processes) as executor:
+            future_to_idx = {executor.submit(_solve_chunk_worker, c): i for i, c in enumerate(chunks)}
+            for future in as_completed(future_to_idx):
+                results[future_to_idx[future]] = future.result()
+                if pbar is not None:
+                    pbar.update(1)
+    finally:
+        if pbar is not None:
+            pbar.close()
+
+    return np.concatenate(results)
+
+
+def _solve_batch(
+    df: pd.DataFrame,
+    trump_arr: np.ndarray,
+    leader_arr: np.ndarray,
+    progress: bool = True,
+) -> np.ndarray:
+    """Solve all rows, returning int8 array of tricks for the *leader's* side."""
+    return _solve_arrays(
+        np.asarray(df["north"], dtype=np.int64),
+        np.asarray(df["east"],  dtype=np.int64),
+        np.asarray(df["south"], dtype=np.int64),
+        np.asarray(df["west"],  dtype=np.int64),
+        trump_arr, leader_arr, progress=progress,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -279,32 +328,51 @@ def _normalize_dds_inputs(df, contracts, col_names, columns, suffix):
     return sources, out_names
 
 
-def _solve_into_cache(df, sources, progress):
+def _solve_into_cache(df, sources, progress, processes=1):
     """Ensure all keys needed by *sources* are present in the ``_dds`` cache."""
     n = len(df)
     if "_dds" not in df.columns:
         df["_dds"] = [dict() for _ in range(n)]
     cache = df["_dds"]
 
+    north_vals = np.asarray(df["north"], dtype=np.int64)
+    east_vals  = np.asarray(df["east"],  dtype=np.int64)
+    south_vals = np.asarray(df["south"], dtype=np.int64)
+    west_vals  = np.asarray(df["west"],  dtype=np.int64)
+
+    # Collect every (row, key, trump, leader) that isn't cached yet, across all
+    # sources.  We deduplicate by (row, key) since DDS results don't depend on
+    # level or doubling — only trump and leader matter for trick count.
+    seen: set[tuple[int, str]] = set()
+    to_solve: list[tuple[int, str, int, int]] = []  # (row, key, trump, leader)
     for dc_list, _ in sources:
-        keys = [_dds_key(dc) for dc in dc_list]
-        needs_solve = [i for i in range(n) if keys[i] not in cache.iat[i]]
+        for i, dc in enumerate(dc_list):
+            key = _dds_key(dc)
+            if key not in cache.iat[i] and (i, key) not in seen:
+                seen.add((i, key))
+                to_solve.append((i, key, _TRUMP_MAP[dc.strain], _LEADER_MAP[str(dc.declarer + 1)]))
 
-        if needs_solve:
-            trump_arr  = np.empty(n, dtype=np.int8)
-            leader_arr = np.empty(n, dtype=np.int8)
-            for i in needs_solve:
-                dc = dc_list[i]
-                trump_arr[i]  = _TRUMP_MAP[dc.strain]
-                leader_arr[i] = _LEADER_MAP[str(dc.declarer + 1)]
+    if not to_solve:
+        return cache
 
-            sub_df = df.iloc[needs_solve]
-            leader_tricks = _solve_batch(
-                sub_df, trump_arr[needs_solve], leader_arr[needs_solve], progress=progress
-            )
+    # Sort by row (deal) then trump (strain) so DDS can reuse its internal
+    # transposition table between consecutive boards.
+    to_solve.sort(key=lambda t: (t[0], t[2]))
 
-            for j, i in enumerate(needs_solve):
-                cache.iat[i][keys[i]] = 13 - int(leader_tricks[j])
+    row_idx    = np.array([t[0] for t in to_solve])
+    trump_arr  = np.array([t[2] for t in to_solve], dtype=np.int8)
+    leader_arr = np.array([t[3] for t in to_solve], dtype=np.int8)
+    sub_args   = (north_vals[row_idx], east_vals[row_idx],
+                  south_vals[row_idx], west_vals[row_idx],
+                  trump_arr, leader_arr)
+
+    if processes > 1 and len(to_solve) > 1:
+        leader_tricks = _solve_parallel(*sub_args, processes=processes, progress=progress)
+    else:
+        leader_tricks = _solve_arrays(*sub_args, progress=progress)
+
+    for j, (row, key, _, _) in enumerate(to_solve):
+        cache.iat[row][key] = 13 - int(leader_tricks[j])
 
     return cache
 
@@ -328,6 +396,8 @@ _CONTRACTS_DOC = """\
         Mutually exclusive with *contracts*.
     suffix : str
         Appended to auto-derived output column names.
+    processes : int
+        Number of parallel worker processes.  Default 1 (no parallelism).
     progress : bool
         Show a progress bar (requires tqdm; silently skipped if not installed).\
 """
@@ -341,6 +411,7 @@ def add_dds_score(
     *,
     columns=None,
     suffix: str = "_score",
+    processes: int = 1,
     progress: bool = True,
 ) -> None:
     """
@@ -366,7 +437,7 @@ def add_dds_score(
 
     n = len(df)
     sources, out_names = _normalize_dds_inputs(df, contracts, col_names, columns, suffix)
-    cache = _solve_into_cache(df, sources, progress)
+    cache = _solve_into_cache(df, sources, progress, processes)
 
     vuln_series = vuln if isinstance(vuln, pd.Series) else None
     for (dc_list, _), out_col in zip(sources, out_names):
@@ -385,6 +456,7 @@ def add_dds_tricks(
     *,
     columns=None,
     suffix: str = "_tricks",
+    processes: int = 1,
     progress: bool = True,
 ) -> None:
     """
@@ -402,7 +474,7 @@ def add_dds_tricks(
     """
     n = len(df)
     sources, out_names = _normalize_dds_inputs(df, contracts, col_names, columns, suffix)
-    cache = _solve_into_cache(df, sources, progress)
+    cache = _solve_into_cache(df, sources, progress, processes)
 
     for (dc_list, _), out_col in zip(sources, out_names):
         keys = [_dds_key(dc) for dc in dc_list]
