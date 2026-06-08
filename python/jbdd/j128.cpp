@@ -5,7 +5,11 @@ int j128_t::from_pylong(PyLongObject* obj)
     const int NB64 = 8;
     unsigned char bytes[2*NB64] = {};
 
+#if PY_VERSION_HEX >= 0x030D0000
+    int ret = PyLong_AsNativeBytes((PyObject*)obj, bytes, sizeof bytes, -1);
+#else
     int ret = _PyLong_AsByteArray(obj, bytes, sizeof bytes, 1 /* little_endian */, 0 /* unsigned */);
+#endif
     if (ret < 0)
 	return ret;
 
