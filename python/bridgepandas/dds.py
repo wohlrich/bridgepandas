@@ -178,7 +178,7 @@ def _solve_parallel(north, east, south, west, trump_arr, leader_arr, processes, 
     from concurrent.futures import ProcessPoolExecutor, as_completed
 
     k = len(north)
-    chunk_size = int(np.ceil(k / processes))
+    chunk_size = _MAXNOOFBOARDS
     chunks = [
         (north[s:s+chunk_size], east[s:s+chunk_size],
          south[s:s+chunk_size], west[s:s+chunk_size],
