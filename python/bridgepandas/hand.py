@@ -197,24 +197,24 @@ class Hand(int):
         )
 
     @property
-    def shape(self) -> tuple[int, int, int, int]:
+    def handshape(self) -> tuple[int, int, int, int]:
         """Suit lengths sorted descending, e.g. (5, 4, 3, 1)."""
         return tuple(sorted(self.pattern, reverse=True))
 
     @property
     def longest_suit(self) -> int:
         """Length of the longest suit."""
-        return self.shape[0]
+        return self.handshape[0]
 
     @property
     def second_suit(self) -> int:
         """Length of the second-longest suit."""
-        return self.shape[1]
+        return self.handshape[1]
 
     @property
     def shortest_suit(self) -> int:
         """Length of the shortest suit."""
-        return self.shape[3]
+        return self.handshape[3]
 
     @property
     def voids(self) -> int:

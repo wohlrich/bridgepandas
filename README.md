@@ -28,7 +28,7 @@ df = bp.random_deals(100, south=hs, seed=1)
 
 # Accept/reject filter (combined with HandSet for speed)
 def accept(deal):
-    return deal.south.shape in {(5,3,3,2), (4,4,3,2)}
+    return deal.south.handshape in {(5,3,3,2), (4,4,3,2)}
 
 df = bp.random_deals(500, south=hs, accept=accept, seed=1)
 
