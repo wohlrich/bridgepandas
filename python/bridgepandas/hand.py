@@ -802,6 +802,25 @@ SecondSuitAccessor  = _make_sorted_length_accessor("second_suit",  1)
 ShortestSuitAccessor = _make_sorted_length_accessor("shortest_suit", 3)
 
 
+@pd.api.extensions.register_series_accessor("handshape")
+class HandshapeAccessor:
+    """Series accessor returning a Series of suit-length tuples sorted descending."""
+
+    def __new__(cls, series: pd.Series) -> pd.Series:
+        if not isinstance(series.array, BridgeHandArray):
+            raise AttributeError("handshape accessor is only valid for BridgeHand columns")
+        arr = series.array
+        lengths = _sorted_suit_lengths(arr._data)
+        tuples = [tuple(row) for row in lengths.tolist()]
+        result = pd.Series(tuples, index=series.index, name=series.name, dtype=object)
+        if arr._mask.any():
+            result[arr._mask] = None
+        return result
+
+    def __init__(self, series: pd.Series) -> None:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Exact suit holding accessor  (series.suits("Kx") etc.)
 # ---------------------------------------------------------------------------
