@@ -192,7 +192,7 @@ def _solve_parallel(north, east, south, west, trump_arr, leader_arr, processes, 
     if progress:
         try:
             from tqdm.auto import tqdm
-            pbar = tqdm(total=len(chunks), desc="DDS", unit="chunk")
+            pbar = tqdm(total=k, desc="DDS", unit="board")
         except ImportError:
             pass
 
@@ -200,9 +200,10 @@ def _solve_parallel(north, east, south, west, trump_arr, leader_arr, processes, 
         with ProcessPoolExecutor(max_workers=processes) as executor:
             future_to_idx = {executor.submit(_solve_chunk_worker, c): i for i, c in enumerate(chunks)}
             for future in as_completed(future_to_idx):
-                results[future_to_idx[future]] = future.result()
+                i = future_to_idx[future]
+                results[i] = future.result()
                 if pbar is not None:
-                    pbar.update(1)
+                    pbar.update(len(chunks[i][0]))
     finally:
         if pbar is not None:
             pbar.close()
